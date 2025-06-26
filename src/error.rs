@@ -1,4 +1,4 @@
-//! Custom error types for the wav2vec2-server.
+//! Custom error types for the amira-rust-asr-server.
 //!
 //! This module provides a centralized error handling system using the `thiserror` crate
 //! to define structured, typed errors with clear messages and proper error conversion.

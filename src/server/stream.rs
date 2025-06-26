@@ -54,7 +54,7 @@ pub struct StreamProcessor {
     ws: WebSocket,
 
     /// The application state
-    state: Arc<AppState>,
+    _state: Arc<AppState>,
 
     /// The stream ID
     stream_id: String,

@@ -10,9 +10,11 @@ pub mod proto {
 
 mod client;
 mod model;
+mod pool;
 mod types;
 
 pub use client::{TritonClient, TritonClientError};
+pub use pool::{ConnectionPool, PoolConfig, PoolStats, PooledConnection};
 pub use model::{
     DecoderJointInput, DecoderJointModel, DecoderJointOutput, EncoderInput, EncoderModel,
     EncoderOutput, PreprocessorInput, PreprocessorModel, PreprocessorOutput, TritonModel,

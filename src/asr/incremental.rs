@@ -49,7 +49,7 @@ pub struct IncrementalAsr<P: AsrPipeline + ?Sized> {
     pipeline: Arc<P>,
 
     /// Vocabulary for decoding
-    vocabulary: Arc<Vocabulary>,
+    _vocabulary: Arc<Vocabulary>,
 
     /// Audio buffer with overlap support
     audio_buffer: OverlappingAudioBuffer,
@@ -64,10 +64,10 @@ pub struct IncrementalAsr<P: AsrPipeline + ?Sized> {
     chunk_size: f32,
 
     /// Leading context in seconds
-    leading_context: f32,
+    _leading_context: f32,
 
     /// Trailing context in seconds
-    trailing_context: f32,
+    _trailing_context: f32,
 }
 
 impl<P: AsrPipeline + ?Sized> IncrementalAsr<P> {
@@ -92,7 +92,7 @@ impl<P: AsrPipeline + ?Sized> IncrementalAsr<P> {
 
         Self {
             pipeline,
-            vocabulary,
+            _vocabulary: vocabulary,
             audio_buffer: OverlappingAudioBuffer::new(
                 capacity,
                 chunk_size,
@@ -102,8 +102,8 @@ impl<P: AsrPipeline + ?Sized> IncrementalAsr<P> {
             accumulated: AccumulatedPredictions::new(),
             decoder_state: DecoderState::new(),
             chunk_size,
-            leading_context,
-            trailing_context,
+            _leading_context: leading_context,
+            _trailing_context: trailing_context,
         }
     }
 

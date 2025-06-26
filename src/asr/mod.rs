@@ -6,15 +6,18 @@
 mod audio;
 mod decoder;
 mod incremental;
+mod memory;
 mod pipeline;
+mod simd;
 pub mod types;
 mod weaving;
 
 pub use audio::{
-    audio_len, bytes_to_f32_samples, calculate_mean_amplitude, AudioRingBuffer,
+    audio_len, bytes_to_f32_samples, bytes_to_f32_samples_into, calculate_mean_amplitude, AudioRingBuffer,
     OverlappingAudioBuffer,
 };
 pub use decoder::greedy_decode;
 pub use incremental::IncrementalAsr;
+pub use memory::{global_pools, AsrMemoryPools, AsrMemoryStats, ObjectPool, PooledObject};
 pub use pipeline::{AsrPipeline, TritonAsrPipeline};
 pub use types::{AccumulatedPredictions, DecoderState, SeqSlice, Transcription, Vocabulary};

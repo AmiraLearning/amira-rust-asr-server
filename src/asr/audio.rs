@@ -25,6 +25,16 @@ pub fn bytes_to_f32_samples(audio_bytes: &[u8]) -> Vec<f32> {
         .collect()
 }
 
+/// Convert raw audio bytes (16-bit PCM) to floating point samples into an existing buffer.
+/// This version avoids allocations by reusing the provided buffer and uses SIMD optimizations.
+///
+/// # Arguments
+/// * `audio_bytes` - Raw audio bytes in 16-bit PCM format
+/// * `output` - Output buffer to write samples into (will be cleared first)
+pub fn bytes_to_f32_samples_into(audio_bytes: &[u8], output: &mut Vec<f32>) {
+    crate::asr::simd::bytes_to_f32_optimized(audio_bytes, output);
+}
+
 /// Get the length of audio in seconds.
 ///
 /// # Arguments
@@ -36,7 +46,7 @@ pub fn audio_len(audio: &[f32]) -> f32 {
     audio.len() as f32 / W2V_SAMPLE_RATE as f32
 }
 
-/// Calculate the mean amplitude of audio.
+/// Calculate the mean amplitude of audio using SIMD optimizations.
 ///
 /// # Arguments
 /// * `audio` - Audio samples
@@ -44,32 +54,7 @@ pub fn audio_len(audio: &[f32]) -> f32 {
 /// # Returns
 /// Mean amplitude value
 pub fn calculate_mean_amplitude(audio: &[f32]) -> f32 {
-    if audio.is_empty() {
-        return 0.0;
-    }
-
-    // Square the samples
-    let squared: Vec<f32> = audio.iter().map(|&s| s * s).collect();
-
-    // Apply smoothing with a window of 400 (as in Python version)
-    let window_size = std::cmp::min(400, squared.len());
-    let mut smoothed = Vec::with_capacity(squared.len());
-
-    for i in 0..squared.len() {
-        let start = if i < window_size / 2 {
-            0
-        } else {
-            i - window_size / 2
-        };
-
-        let end = std::cmp::min(i + window_size / 2 + 1, squared.len());
-        let sum: f32 = squared[start..end].iter().sum();
-        smoothed.push(sum / (end - start) as f32);
-    }
-
-    // Calculate the mean of the smoothed values
-    let sum: f32 = smoothed.iter().sum();
-    (sum / smoothed.len() as f32).sqrt()
+    crate::asr::simd::mean_amplitude_optimized(audio)
 }
 
 /// Generate sequence windows with overlap.

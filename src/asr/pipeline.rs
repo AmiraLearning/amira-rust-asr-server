@@ -7,13 +7,14 @@ use async_trait::async_trait;
 use std::sync::Arc;
 use tracing::{debug, info};
 
-use crate::asr::audio::bytes_to_f32_samples;
+use crate::asr::audio::bytes_to_f32_samples_into;
 use crate::asr::decoder::greedy_decode;
+use crate::asr::memory::global_pools;
 use crate::asr::types::{DecoderState, Transcription, Vocabulary};
 use crate::error::Result;
 use crate::triton::{
-    DecoderJointInput, DecoderJointModel, EncoderInput, EncoderModel, PreprocessorInput,
-    PreprocessorModel, TritonClient, TritonModel,
+    ConnectionPool, DecoderJointInput, DecoderJointModel, EncoderInput, EncoderModel, 
+    PreprocessorInput, PreprocessorModel, TritonClient, TritonModel,
 };
 
 /// Defines the contract for an ASR processing pipeline.
@@ -45,8 +46,11 @@ pub trait AsrPipeline: Send + Sync {
 
 /// ASR pipeline implementation using Triton Inference Server.
 pub struct TritonAsrPipeline {
-    /// Client for communicating with Triton
-    client: TritonClient,
+    /// Connection pool for Triton clients
+    connection_pool: Arc<ConnectionPool>,
+
+    /// Legacy client for backward compatibility
+    client: Option<TritonClient>,
 
     /// Vocabulary for token decoding
     vocabulary: Arc<Vocabulary>,
@@ -62,17 +66,18 @@ pub struct TritonAsrPipeline {
 }
 
 impl TritonAsrPipeline {
-    /// Create a new ASR pipeline.
+    /// Create a new ASR pipeline with a connection pool (recommended).
     ///
     /// # Arguments
-    /// * `client` - The Triton client
+    /// * `connection_pool` - The Triton connection pool
     /// * `vocabulary` - The vocabulary for token decoding
     ///
     /// # Returns
     /// A new ASR pipeline
-    pub fn new(client: TritonClient, vocabulary: Arc<Vocabulary>) -> Self {
+    pub fn new_with_pool(connection_pool: ConnectionPool, vocabulary: Arc<Vocabulary>) -> Self {
         Self {
-            client,
+            connection_pool: Arc::new(connection_pool),
+            client: None,
             vocabulary,
             preprocessor: PreprocessorModel,
             encoder: EncoderModel,
@@ -80,7 +85,28 @@ impl TritonAsrPipeline {
         }
     }
 
-    /// Convert audio bytes to normalized samples.
+    /// Create a new ASR pipeline with a single client (legacy).
+    ///
+    /// # Arguments
+    /// * `client` - The Triton client
+    /// * `vocabulary` - The vocabulary for token decoding
+    /// * `endpoint` - The Triton endpoint for pool creation
+    ///
+    /// # Returns
+    /// A new ASR pipeline
+    pub async fn new(client: TritonClient, vocabulary: Arc<Vocabulary>, endpoint: String) -> Result<Self> {
+        let pool = ConnectionPool::with_defaults(endpoint).await?;
+        Ok(Self {
+            connection_pool: Arc::new(pool),
+            client: Some(client),
+            vocabulary,
+            preprocessor: PreprocessorModel,
+            encoder: EncoderModel,
+            decoder_joint: DecoderJointModel,
+        })
+    }
+
+    /// Convert audio bytes to normalized samples using memory pools.
     ///
     /// # Arguments
     /// * `audio_bytes` - The raw audio bytes (16-bit PCM)
@@ -88,7 +114,15 @@ impl TritonAsrPipeline {
     /// # Returns
     /// The normalized audio samples
     fn convert_audio(&self, audio_bytes: &[u8]) -> Vec<f32> {
-        bytes_to_f32_samples(audio_bytes)
+        // Use memory pool for audio buffer
+        let mut audio_buffer = global_pools().audio_buffers.get();
+        audio_buffer.clear();
+        
+        // Convert bytes to f32 samples directly into the pooled buffer
+        bytes_to_f32_samples_into(audio_bytes, &mut audio_buffer);
+        
+        // Take ownership to return from pool
+        audio_buffer.take()
     }
 
     /// Process audio with the full ASR pipeline.
@@ -107,7 +141,13 @@ impl TritonAsrPipeline {
         info!("Starting ASR pipeline for {} samples", waveform.len());
 
         // Step 1: Preprocess audio to features
-        let mut client = self.client.clone();
+        let mut connection = if let Some(ref client) = self.client {
+            // Legacy mode: clone the client
+            client.clone()
+        } else {
+            // Pool mode: get connection from pool
+            self.connection_pool.get().await?.client().clone()
+        };
         let preprocessor_input = PreprocessorInput {
             waveform: waveform.to_vec(),
         };
@@ -115,7 +155,7 @@ impl TritonAsrPipeline {
         debug!("Calling preprocessor...");
         let preprocessor_output = self
             .preprocessor
-            .infer(&mut client, preprocessor_input)
+            .infer(&mut connection, preprocessor_input)
             .await?;
         info!(
             "Preprocessor complete: features_len={}",
@@ -129,7 +169,7 @@ impl TritonAsrPipeline {
         };
 
         debug!("Calling encoder...");
-        let encoder_output = self.encoder.infer(&mut client, encoder_input).await?;
+        let encoder_output = self.encoder.infer(&mut connection, encoder_input).await?;
         info!(
             "Encoder complete: encoded_len={}",
             encoder_output.encoded_len
@@ -150,7 +190,7 @@ impl TritonAsrPipeline {
         }
 
         let decode_state = DecodeState {
-            client: client.clone(),
+            client: connection.clone(),
             decoder: decoder_joint_ref,
         };
 

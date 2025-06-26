@@ -7,12 +7,12 @@ use std::sync::Arc;
 use tracing::info;
 use tracing_subscriber::fmt;
 
-use wav2vec2_server::{
+use amira_rust_asr_server::{
     asr::{TritonAsrPipeline, Vocabulary},
     config::{concurrency::*, Config},
     error::{AppError, Result},
     server::{create_router, AppState},
-    triton::TritonClient,
+    triton::{ConnectionPool, PoolConfig},
 };
 
 #[tokio::main]
@@ -28,9 +28,14 @@ async fn main() -> Result<()> {
     // Load configuration
     let config = Config::from_env();
 
-    // Connect to Triton
-    info!("Connecting to Triton at {}", config.triton_endpoint);
-    let triton_client = TritonClient::connect(&config.triton_endpoint)
+    // Create Triton connection pool
+    info!("Creating Triton connection pool for {}", config.triton_endpoint);
+    let pool_config = PoolConfig {
+        max_connections: MAX_CONCURRENT_STREAMS + MAX_CONCURRENT_BATCHES,
+        min_connections: 5,
+        ..Default::default()
+    };
+    let triton_pool = ConnectionPool::new(config.triton_endpoint.clone(), pool_config)
         .await
         .map_err(|e| AppError::from(e))?;
 
@@ -42,9 +47,9 @@ async fn main() -> Result<()> {
     // Create shared vocabulary
     let shared_vocabulary = Arc::new(vocabulary);
 
-    // Create ASR pipeline
-    let asr_pipeline = Arc::new(TritonAsrPipeline::new(
-        triton_client,
+    // Create ASR pipeline with connection pool
+    let asr_pipeline = Arc::new(TritonAsrPipeline::new_with_pool(
+        triton_pool,
         shared_vocabulary.clone(),
     ));
 

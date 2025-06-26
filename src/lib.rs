@@ -1,4 +1,4 @@
-//! The `wav2vec2-server` core library.
+//! The `amira_rust_asr_server` core library.
 //!
 //! This crate provides a high-performance ASR (Automatic Speech Recognition)
 //! server using the RNN-T (Recurrent Neural Network Transducer) architecture
