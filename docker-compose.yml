@@ -1,0 +1,54 @@
+version: '3.8'
+
+services:
+  # Triton Inference Server (for development)
+  triton:
+    image: nvcr.io/nvidia/tritonserver:23.10-py3
+    command: tritonserver --model-repository=/models --allow-http=true --allow-grpc=true
+    ports:
+      - "8000:8000"  # HTTP
+      - "8001:8001"  # gRPC
+      - "8002:8002"  # Metrics
+    volumes:
+      - ./model-repo:/models:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  # ASR Server
+  asr-server:
+    build: .
+    ports:
+      - "8057:8057"
+    environment:
+      - TRITON_ENDPOINT=http://triton:8001
+      - VOCABULARY_PATH=/app/vocab.txt
+      - RUST_LOG=info
+    depends_on:
+      - triton
+    volumes:
+      - ./vocab.txt:/app/vocab.txt:ro
+
+  # Redis (for future caching)
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+
+  # Prometheus (for metrics)
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+
+volumes:
+  redis-data:
