@@ -117,7 +117,7 @@ The application uses environment variables for configuration (see `src/config.rs
 
 ## Development Notes
 
-- The crate name in code is `wav2vec2_server` (see `src/lib.rs:1` and imports in `src/main.rs:10`)
+- The crate name in code is `amira_rust_asr_server` (see `src/lib.rs:1` and imports in `src/main.rs:10`)
 - Proto files are compiled at build time via `build.rs` using `tonic-build`
 - Performance is critical - look for zero-copy patterns and async optimizations
 - Triton models expect specific input/output tensor formats defined in `src/triton/types.rs`

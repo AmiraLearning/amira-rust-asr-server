@@ -12,7 +12,6 @@ use axum::{
     Json, Router,
 };
 use serde::Deserialize;
-use tokio::sync::oneshot;
 use tower::ServiceBuilder;
 use tower_http::cors::CorsLayer;
 use tracing::{error, info};
@@ -74,7 +73,7 @@ async fn handle_stream_connection(ws: WebSocket, state: Arc<AppState>, model: St
     state.metrics.increment_stream();
 
     // Create stream and handle
-    let (stream_id, handle, processor) = create_stream(ws, state.clone());
+    let (stream_id, handle, processor, shutdown_rx) = create_stream(ws, state.clone());
 
     info!("Stream {} started for model {}", stream_id, model);
 
@@ -82,7 +81,6 @@ async fn handle_stream_connection(ws: WebSocket, state: Arc<AppState>, model: St
     state.active_streams.insert(stream_id.clone(), handle);
 
     // Process stream
-    let (_shutdown_tx, shutdown_rx) = oneshot::channel();
     processor.process(shutdown_rx).await;
 
     // Cleanup

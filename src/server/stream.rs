@@ -101,7 +101,7 @@ impl StreamProcessor {
 
         Self {
             ws,
-            state,
+            _state: state,
             stream_id,
             audio_buffer: AudioRingBuffer::new(BUFFER_CAPACITY),
             incremental_asr,
@@ -127,6 +127,7 @@ impl StreamProcessor {
                             last_activity = Instant::now();
                             if let Err(e) = self.handle_audio_chunk(data).await {
                                 error!("Error handling audio chunk: {}", e);
+                                let _ = self.send_error(&e.to_string()).await;
                                 break;
                             }
                         }
@@ -331,17 +332,17 @@ impl StreamProcessor {
 /// * `state` - The application state
 ///
 /// # Returns
-/// A tuple of (stream_id, stream_handle, stream_processor)
+/// A tuple of (stream_id, stream_handle, stream_processor, shutdown_receiver)
 pub fn create_stream(
     ws: WebSocket,
     state: Arc<AppState>,
-) -> (String, StreamHandle, StreamProcessor) {
+) -> (String, StreamHandle, StreamProcessor, oneshot::Receiver<()>) {
     let stream_id = Uuid::new_v4().to_string();
     let now = Instant::now();
     let last_activity = Arc::new(tokio::sync::RwLock::new(now));
 
     // Create shutdown channel
-    let (shutdown_tx, _shutdown_rx) = oneshot::channel();
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
 
     // Create stream handle
     let handle = StreamHandle {
@@ -354,5 +355,5 @@ pub fn create_stream(
     // Create stream processor
     let processor = StreamProcessor::new(ws, state, stream_id.clone());
 
-    (stream_id, handle, processor)
+    (stream_id, handle, processor, shutdown_rx)
 }

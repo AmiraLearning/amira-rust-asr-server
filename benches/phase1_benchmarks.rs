@@ -1,23 +1,20 @@
 //! Phase 1 performance benchmarks for connection pooling, memory pools, and SIMD.
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
 use amira_rust_asr_server::asr::{
-    bytes_to_f32_samples, bytes_to_f32_samples_into, calculate_mean_amplitude,
-    global_pools, simd,
+    bytes_to_f32_samples, bytes_to_f32_samples_into, calculate_mean_amplitude, global_pools, simd,
 };
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use std::hint;
 
 fn bench_audio_conversion(c: &mut Criterion) {
     let mut group = c.benchmark_group("Audio Conversion");
-    
+
     // Test with different audio sizes (1 second to 30 seconds at 16kHz)
     let sizes = vec![16000, 32000, 64000, 160000, 480000]; // 1s, 2s, 4s, 10s, 30s
-    
+
     for size in sizes {
-        let audio_bytes: Vec<u8> = (0..size * 2)
-            .map(|i| (i % 256) as u8)
-            .collect();
-        
+        let audio_bytes: Vec<u8> = (0..size * 2).map(|i| (i % 256) as u8).collect();
+
         // Benchmark original implementation
         group.bench_with_input(
             BenchmarkId::new("Original", size),
@@ -29,7 +26,7 @@ fn bench_audio_conversion(c: &mut Criterion) {
                 });
             },
         );
-        
+
         // Benchmark SIMD optimized implementation
         group.bench_with_input(
             BenchmarkId::new("SIMD Optimized", size),
@@ -42,7 +39,7 @@ fn bench_audio_conversion(c: &mut Criterion) {
                 });
             },
         );
-        
+
         // Benchmark pooled memory implementation
         group.bench_with_input(
             BenchmarkId::new("Memory Pooled", size),
@@ -56,20 +53,18 @@ fn bench_audio_conversion(c: &mut Criterion) {
             },
         );
     }
-    
+
     group.finish();
 }
 
 fn bench_mean_amplitude(c: &mut Criterion) {
     let mut group = c.benchmark_group("Mean Amplitude");
-    
+
     let sizes = vec![16000, 64000, 160000, 480000]; // 1s, 4s, 10s, 30s
-    
+
     for size in sizes {
-        let audio_samples: Vec<f32> = (0..size)
-            .map(|i| (i as f32 * 0.001).sin())
-            .collect();
-        
+        let audio_samples: Vec<f32> = (0..size).map(|i| (i as f32 * 0.001).sin()).collect();
+
         // Benchmark scalar implementation
         group.bench_with_input(
             BenchmarkId::new("Scalar", size),
@@ -86,7 +81,7 @@ fn bench_mean_amplitude(c: &mut Criterion) {
                 });
             },
         );
-        
+
         // Benchmark SIMD optimized implementation
         group.bench_with_input(
             BenchmarkId::new("SIMD Optimized", size),
@@ -99,13 +94,13 @@ fn bench_mean_amplitude(c: &mut Criterion) {
             },
         );
     }
-    
+
     group.finish();
 }
 
 fn bench_memory_allocation(c: &mut Criterion) {
     let mut group = c.benchmark_group("Memory Allocation");
-    
+
     // Benchmark raw Vec allocation vs memory pool
     group.bench_function("Raw Vec::new", |b| {
         b.iter(|| {
@@ -113,14 +108,14 @@ fn bench_memory_allocation(c: &mut Criterion) {
             hint::black_box(v);
         });
     });
-    
+
     group.bench_function("Memory Pool", |b| {
         b.iter(|| {
             let buffer = global_pools().audio_buffers.get();
             hint::black_box(buffer.len());
         });
     });
-    
+
     // Benchmark allocation + deallocation cycles
     group.bench_function("Raw Vec Cycle", |b| {
         b.iter(|| {
@@ -131,7 +126,7 @@ fn bench_memory_allocation(c: &mut Criterion) {
             }
         });
     });
-    
+
     group.bench_function("Memory Pool Cycle", |b| {
         b.iter(|| {
             for _ in 0..100 {
@@ -142,19 +137,19 @@ fn bench_memory_allocation(c: &mut Criterion) {
             }
         });
     });
-    
+
     group.finish();
 }
 
 fn bench_comprehensive_pipeline_simulation(c: &mut Criterion) {
     let mut group = c.benchmark_group("Pipeline Simulation");
-    
+
     // Simulate a typical ASR pipeline step with audio conversion + amplitude calculation
     let audio_bytes: Vec<u8> = (0..32000) // 2 seconds of audio
         .map(|i| ((i as f32 * 0.1).sin() * 32767.0) as i16)
         .flat_map(|sample| sample.to_le_bytes())
         .collect();
-    
+
     group.bench_function("Original Pipeline", |b| {
         b.iter(|| {
             let samples = bytes_to_f32_samples(black_box(&audio_bytes));
@@ -166,7 +161,7 @@ fn bench_comprehensive_pipeline_simulation(c: &mut Criterion) {
             hint::black_box((samples.len(), amplitude));
         });
     });
-    
+
     group.bench_function("Optimized Pipeline", |b| {
         b.iter(|| {
             let mut buffer = global_pools().audio_buffers.get();
@@ -175,7 +170,7 @@ fn bench_comprehensive_pipeline_simulation(c: &mut Criterion) {
             hint::black_box((buffer.len(), amplitude));
         });
     });
-    
+
     group.finish();
 }
 

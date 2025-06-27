@@ -7,6 +7,10 @@ edition = "2021"
 name = "amira-rust-asr-server"
 path = "src/main.rs"
 
+[[bin]]
+name = "test-connection-pool"
+path = "src/bin/test_connection_pool.rs"
+
 [lib]
 name = "amira_rust_asr_server"
 path = "src/lib.rs"
@@ -17,8 +21,12 @@ tokio = { version = "1.35", features = ["full"] }
 
 # Web framework
 axum = { version = "0.7", features = ["ws", "json", "macros"] }
-tower = "0.4"
+tower = { version = "0.4", features = ["full"] }
 tower-http = { version = "0.5", features = ["cors", "trace"] }
+
+# Circuit breakers and reliability
+tower-limit = "0.3"
+tower-timeout = "0.3"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
@@ -39,6 +47,13 @@ once_cell = "1.19"
 # Logging and tracing
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
+tracing-opentelemetry = "0.22"
+opentelemetry = "0.21"
+opentelemetry-jaeger = "0.20"
+
+# Metrics and observability
+metrics = "0.22"
+metrics-exporter-prometheus = "0.13"
 
 # Error handling
 thiserror = "1.0"
@@ -48,8 +63,33 @@ anyhow = "1.0"
 uuid = { version = "1.6", features = ["v4", "serde"] }
 async-trait = "0.1"
 
+# Graceful shutdown
+tokio-util = "0.7"
+signal-hook = "0.3"
+signal-hook-tokio = { version = "0.3", features = ["futures-v0_3"] }
+
 [build-dependencies]
 tonic-build = "0.10"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+tokio-test = "0.4"
+
+[[bench]]
+name = "phase1_benchmarks"
+harness = false
+
+[[bench]]
+name = "simple_bench"
+harness = false
+
+[[bench]]
+name = "connection_pool_bench"
+harness = false
+
+[[bench]]
+name = "memory_pool_bench"
+harness = false
 
 [profile.release]
 opt-level = 3
@@ -57,6 +97,11 @@ lto = "fat"
 codegen-units = 1
 panic = "abort"
 strip = true
+
+[profile.bench]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
 
 [profile.release.package."*"]
 opt-level = 3

@@ -116,7 +116,13 @@ impl Vocabulary {
                 // Handle BPE tokens with ▁ prefix
                 if token.starts_with("▁") {
                     // Add space before the token (except at the beginning)
-                    result.push_str(&format!(" {}", &token[3..])); // Skip the ▁ character (3 bytes in UTF-8)
+                    // Use proper UTF-8 character boundary detection
+                    if let Some(stripped) = token.strip_prefix("▁") {
+                        result.push_str(&format!(" {}", stripped));
+                    } else {
+                        // Fallback if prefix removal fails
+                        result.push_str(token);
+                    }
                 } else {
                     result.push_str(token);
                 }

@@ -7,5 +7,6 @@
 pub mod asr;
 pub mod config;
 pub mod error;
+pub mod reliability;
 pub mod server;
 pub mod triton;

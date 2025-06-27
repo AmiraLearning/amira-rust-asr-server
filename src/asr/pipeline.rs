@@ -13,7 +13,7 @@ use crate::asr::memory::global_pools;
 use crate::asr::types::{DecoderState, Transcription, Vocabulary};
 use crate::error::Result;
 use crate::triton::{
-    ConnectionPool, DecoderJointInput, DecoderJointModel, EncoderInput, EncoderModel, 
+    ConnectionPool, DecoderJointInput, DecoderJointModel, EncoderInput, EncoderModel,
     PreprocessorInput, PreprocessorModel, TritonClient, TritonModel,
 };
 
@@ -94,7 +94,11 @@ impl TritonAsrPipeline {
     ///
     /// # Returns
     /// A new ASR pipeline
-    pub async fn new(client: TritonClient, vocabulary: Arc<Vocabulary>, endpoint: String) -> Result<Self> {
+    pub async fn new(
+        client: TritonClient,
+        vocabulary: Arc<Vocabulary>,
+        endpoint: String,
+    ) -> Result<Self> {
         let pool = ConnectionPool::with_defaults(endpoint).await?;
         Ok(Self {
             connection_pool: Arc::new(pool),
@@ -117,10 +121,10 @@ impl TritonAsrPipeline {
         // Use memory pool for audio buffer
         let mut audio_buffer = global_pools().audio_buffers.get();
         audio_buffer.clear();
-        
+
         // Convert bytes to f32 samples directly into the pooled buffer
         bytes_to_f32_samples_into(audio_bytes, &mut audio_buffer);
-        
+
         // Take ownership to return from pool
         audio_buffer.take()
     }

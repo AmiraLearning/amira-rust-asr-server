@@ -11,12 +11,14 @@ pub mod proto {
 mod client;
 mod model;
 mod pool;
+mod reliable_client;
 mod types;
 
 pub use client::{TritonClient, TritonClientError};
-pub use pool::{ConnectionPool, PoolConfig, PoolStats, PooledConnection};
 pub use model::{
     DecoderJointInput, DecoderJointModel, DecoderJointOutput, EncoderInput, EncoderModel,
     EncoderOutput, PreprocessorInput, PreprocessorModel, PreprocessorOutput, TritonModel,
 };
+pub use pool::{ConnectionPool, PoolConfig, PoolStats, PooledConnection};
+pub use reliable_client::{ReliableTritonClient, ReliableTritonClientBuilder};
 pub use types::{RawTensor, TensorData, TensorDef, TensorShape};

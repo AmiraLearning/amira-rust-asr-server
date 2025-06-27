@@ -86,6 +86,7 @@ struct ConnectionPoolInner {
     connections: Mutex<VecDeque<PooledConnection>>,
     semaphore: Semaphore,
     active_connections: parking_lot::Mutex<usize>,
+    self_ref: std::sync::Weak<Self>,
 }
 
 impl ConnectionPoolInner {
@@ -93,7 +94,10 @@ impl ConnectionPoolInner {
         let mut connections = self.connections.lock();
         if connections.len() < self.config.max_connections {
             connections.push_back(conn);
-            debug!("Returned connection to pool, pool size: {}", connections.len());
+            debug!(
+                "Returned connection to pool, pool size: {}",
+                connections.len()
+            );
         } else {
             debug!("Pool full, dropping connection");
         }
@@ -105,9 +109,14 @@ impl ConnectionPoolInner {
             .map_err(AppError::from)?;
 
         let now = Instant::now();
+        let pool_arc = self
+            .self_ref
+            .upgrade()
+            .ok_or_else(|| AppError::Internal("Connection pool has been dropped".to_string()))?;
+
         Ok(PooledConnection {
             client,
-            pool: unsafe { Arc::from_raw(self as *const Self) },
+            pool: pool_arc,
             created_at: now,
             last_used: now,
         })
@@ -121,10 +130,8 @@ impl ConnectionPoolInner {
     fn cleanup_idle_connections(&self) {
         let mut connections = self.connections.lock();
         let before_cleanup = connections.len();
-        
-        connections.retain(|conn| {
-            conn.idle_time() < self.config.max_idle_time
-        });
+
+        connections.retain(|conn| conn.idle_time() < self.config.max_idle_time);
 
         let after_cleanup = connections.len();
         if before_cleanup != after_cleanup {
@@ -154,13 +161,14 @@ impl ConnectionPool {
     /// A new connection pool.
     pub async fn new(endpoint: String, config: PoolConfig) -> Result<Self> {
         let semaphore = Semaphore::new(config.max_connections);
-        
-        let inner = Arc::new(ConnectionPoolInner {
+
+        let inner = Arc::new_cyclic(|weak_ref| ConnectionPoolInner {
             endpoint: endpoint.clone(),
             config: config.clone(),
             connections: Mutex::new(VecDeque::with_capacity(config.max_connections)),
             semaphore,
             active_connections: parking_lot::Mutex::new(0),
+            self_ref: weak_ref.clone(),
         });
 
         let pool = Self { inner };
@@ -197,7 +205,7 @@ impl ConnectionPool {
         // Try to acquire a semaphore permit first
         let _permit = tokio::time::timeout(
             self.inner.config.acquire_timeout,
-            self.inner.semaphore.acquire()
+            self.inner.semaphore.acquire(),
         )
         .await
         .map_err(|_| AppError::Internal("Connection pool timeout".to_string()))?
@@ -212,7 +220,7 @@ impl ConnectionPool {
         // Create a new connection
         debug!("Creating new connection for pool");
         let conn = self.inner.create_connection().await?;
-        
+
         {
             let mut active = self.inner.active_connections.lock();
             *active += 1;
@@ -224,7 +232,7 @@ impl ConnectionPool {
     /// Pre-warm the pool with minimum connections.
     async fn prewarm(&self) -> Result<()> {
         let mut connections = Vec::new();
-        
+
         for _ in 0..self.inner.config.min_connections {
             match self.inner.create_connection().await {
                 Ok(conn) => connections.push(conn),
@@ -240,7 +248,10 @@ impl ConnectionPool {
             pool_connections.push_back(conn);
         }
 
-        info!("Pre-warmed pool with {} connections", pool_connections.len());
+        info!(
+            "Pre-warmed pool with {} connections",
+            pool_connections.len()
+        );
         Ok(())
     }
 
@@ -262,7 +273,7 @@ impl ConnectionPool {
     pub fn stats(&self) -> PoolStats {
         let connections = self.inner.connections.lock();
         let active = *self.inner.active_connections.lock();
-        
+
         PoolStats {
             total_connections: active + connections.len(),
             active_connections: active,
@@ -301,7 +312,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_pool_creation() {
-        let config = PoolConfig {
+        let _config = PoolConfig {
             max_connections: 10,
             min_connections: 2,
             max_idle_time: Duration::from_secs(30),

@@ -29,7 +29,10 @@ async fn main() -> Result<()> {
     let config = Config::from_env();
 
     // Create Triton connection pool
-    info!("Creating Triton connection pool for {}", config.triton_endpoint);
+    info!(
+        "Creating Triton connection pool for {}",
+        config.triton_endpoint
+    );
     let pool_config = PoolConfig {
         max_connections: MAX_CONCURRENT_STREAMS + MAX_CONCURRENT_BATCHES,
         min_connections: 5,

@@ -48,6 +48,10 @@ pub enum AppError {
     #[error("Internal server error: {0}")]
     Internal(String),
 
+    /// Service is unavailable (e.g., circuit breaker is open).
+    #[error("Service unavailable: {0}")]
+    ServiceUnavailable(String),
+
     /// JSON serialization/deserialization errors.
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
@@ -59,6 +63,7 @@ impl IntoResponse for AppError {
         let (status, error_message) = match &self {
             AppError::Validation(_) => (StatusCode::BAD_REQUEST, self.to_string()),
             AppError::CapacityExceeded(_) => (StatusCode::SERVICE_UNAVAILABLE, self.to_string()),
+            AppError::ServiceUnavailable(_) => (StatusCode::SERVICE_UNAVAILABLE, self.to_string()),
             AppError::Timeout(_) => (StatusCode::REQUEST_TIMEOUT, self.to_string()),
             _ => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
         };

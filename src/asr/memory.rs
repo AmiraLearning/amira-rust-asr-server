@@ -25,7 +25,7 @@ impl<T> ObjectPool<T> {
         F: Fn() -> T + Send + Sync + 'static,
     {
         let mut pool = VecDeque::with_capacity(max_size);
-        
+
         // Pre-allocate objects
         for _ in 0..initial_size {
             pool.push_back(factory());
@@ -40,9 +40,15 @@ impl<T> ObjectPool<T> {
 
     /// Get an object from the pool, creating a new one if empty.
     pub fn get(&self) -> PooledObject<T> {
+        // Fast path: try to get from pool without blocking
         let obj = {
             let mut pool = self.pool.lock();
-            pool.pop_front().unwrap_or_else(|| (self.factory)())
+            pool.pop_front()
+        };
+
+        let obj = match obj {
+            Some(o) => o,
+            None => (self.factory)(), // Create new if pool empty
         };
 
         PooledObject {
@@ -103,7 +109,7 @@ impl<'a, T> Drop for PooledObject<'a, T> {
 
 impl<'a, T> std::ops::Deref for PooledObject<'a, T> {
     type Target = T;
-    
+
     fn deref(&self) -> &Self::Target {
         self.get()
     }
@@ -126,22 +132,22 @@ pub struct PoolStats {
 pub struct AsrMemoryPools {
     /// Pool for f32 audio buffers (typical size: 16000 samples = 1 second).
     pub audio_buffers: ObjectPool<Vec<f32>>,
-    
+
     /// Pool for encoder input tensors (typical size: depends on model).
     pub encoder_inputs: ObjectPool<Vec<f32>>,
-    
+
     /// Pool for encoder output tensors.
     pub encoder_outputs: ObjectPool<Vec<f32>>,
-    
+
     /// Pool for decoder target sequences.
     pub decoder_targets: ObjectPool<Vec<i32>>,
-    
+
     /// Pool for decoder state vectors.
     pub decoder_states: ObjectPool<Vec<f32>>,
-    
+
     /// Pool for logits tensors.
     pub logits: ObjectPool<Vec<f32>>,
-    
+
     /// Pool for raw tensor data.
     pub raw_tensors: ObjectPool<Vec<u8>>,
 }
@@ -158,40 +164,28 @@ impl AsrMemoryPools {
         Self {
             audio_buffers: ObjectPool::new(
                 || Vec::with_capacity(AUDIO_SAMPLE_RATE * 2), // 2 seconds capacity
-                20, // max 20 buffers
-                5,  // pre-allocate 5
+                20,                                           // max 20 buffers
+                5,                                            // pre-allocate 5
             ),
-            
+
             encoder_inputs: ObjectPool::new(
                 || Vec::with_capacity(ENCODER_OUTPUT_SIZE),
                 50, // max 50 buffers
                 10, // pre-allocate 10
             ),
-            
-            encoder_outputs: ObjectPool::new(
-                || Vec::with_capacity(ENCODER_OUTPUT_SIZE),
-                50,
-                10,
-            ),
-            
+
+            encoder_outputs: ObjectPool::new(|| Vec::with_capacity(ENCODER_OUTPUT_SIZE), 50, 10),
+
             decoder_targets: ObjectPool::new(
                 || Vec::with_capacity(200), // max 200 tokens
-                100, // max 100 buffers
-                20,  // pre-allocate 20
+                100,                        // max 100 buffers
+                20,                         // pre-allocate 20
             ),
-            
-            decoder_states: ObjectPool::new(
-                || Vec::with_capacity(DECODER_STATE_SIZE),
-                100,
-                20,
-            ),
-            
-            logits: ObjectPool::new(
-                || Vec::with_capacity(VOCABULARY_SIZE),
-                100,
-                20,
-            ),
-            
+
+            decoder_states: ObjectPool::new(|| Vec::with_capacity(DECODER_STATE_SIZE), 100, 20),
+
+            logits: ObjectPool::new(|| Vec::with_capacity(VOCABULARY_SIZE), 100, 20),
+
             raw_tensors: ObjectPool::new(
                 || Vec::with_capacity(TENSOR_BUFFER_SIZE),
                 30, // max 30MB total
@@ -234,18 +228,23 @@ pub struct AsrMemoryStats {
 
 impl std::fmt::Display for AsrMemoryStats {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, 
+        write!(
+            f,
             "ASR Memory Pools - Audio: {}/{}, Encoder: {}/{}, Decoder: {}/{}, Raw: {}/{}",
-            self.audio_buffers.available, self.audio_buffers.max_size,
-            self.encoder_inputs.available, self.encoder_inputs.max_size,
-            self.decoder_targets.available, self.decoder_targets.max_size,
-            self.raw_tensors.available, self.raw_tensors.max_size
+            self.audio_buffers.available,
+            self.audio_buffers.max_size,
+            self.encoder_inputs.available,
+            self.encoder_inputs.max_size,
+            self.decoder_targets.available,
+            self.decoder_targets.max_size,
+            self.raw_tensors.available,
+            self.raw_tensors.max_size
         )
     }
 }
 
 /// Global memory pools instance.
-static GLOBAL_POOLS: once_cell::sync::Lazy<AsrMemoryPools> = 
+static GLOBAL_POOLS: once_cell::sync::Lazy<AsrMemoryPools> =
     once_cell::sync::Lazy::new(AsrMemoryPools::new);
 
 /// Get access to the global memory pools.
@@ -260,19 +259,19 @@ mod tests {
     #[test]
     fn test_object_pool() {
         let pool = ObjectPool::new(|| Vec::<i32>::new(), 5, 2);
-        
+
         // Get an object
         let mut obj1 = pool.get();
         obj1.push(42);
         assert_eq!(obj1.len(), 1);
-        
+
         // Return it (via drop)
         drop(obj1);
-        
+
         // Get it again - should be reused
         let obj2 = pool.get();
         assert_eq!(obj2.len(), 1); // Should still have the 42
-        
+
         let stats = pool.stats();
         assert_eq!(stats.max_size, 5);
     }
@@ -280,16 +279,16 @@ mod tests {
     #[test]
     fn test_asr_memory_pools() {
         let pools = AsrMemoryPools::new();
-        
+
         let mut audio_buf = pools.audio_buffers.get();
         audio_buf.push(1.0);
-        
+
         let mut encoder_buf = pools.encoder_inputs.get();
         encoder_buf.push(2.0);
-        
+
         drop(audio_buf);
         drop(encoder_buf);
-        
+
         let stats = pools.stats();
         println!("{}", stats);
     }
