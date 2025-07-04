@@ -4,9 +4,10 @@
 //! server using the RNN-T (Recurrent Neural Network Transducer) architecture
 //! via Triton Inference Server.
 
-pub mod asr;
-pub mod config;
 pub mod error;
+pub mod config;
+pub mod triton;
+pub mod asr;
+pub mod performance;
 pub mod reliability;
 pub mod server;
-pub mod triton;

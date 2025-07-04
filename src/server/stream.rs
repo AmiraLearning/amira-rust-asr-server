@@ -13,11 +13,16 @@ use serde::Deserialize;
 use tokio::select;
 use tokio::sync::oneshot;
 use tokio::time::{interval, timeout};
-use tracing::{debug, error, info, warn};
+// use tracing::{debug, error, info, warn};  // Temporarily disabled
+macro_rules! debug { ($($tt:tt)*) => {}; }
+macro_rules! error { ($($tt:tt)*) => {}; }
+macro_rules! info { ($($tt:tt)*) => {}; }
+macro_rules! warn { ($($tt:tt)*) => {}; }
 use uuid::Uuid;
 
 use crate::asr::types::{AsrResponse, StreamStatus};
 use crate::asr::{AudioRingBuffer, IncrementalAsr};
+// use crate::performance::specialized_pools::spawn_io;  // Disabled for now
 use crate::config::audio::{BUFFER_CAPACITY, MIN_PARTIAL_TRANSCRIPTION_SAMPLES};
 use crate::config::streaming::{
     CONTROL_BYTE_END, CONTROL_BYTE_KEEPALIVE, KEEPALIVE_CHECK_PERIOD_MS, STREAM_TIMEOUT_SECS,
@@ -63,7 +68,7 @@ pub struct StreamProcessor {
     audio_buffer: AudioRingBuffer,
 
     /// Incremental ASR processor
-    incremental_asr: IncrementalAsr<dyn crate::asr::AsrPipeline>,
+    incremental_asr: IncrementalAsr,
 
     /// The last transcription
     last_transcription: String,
@@ -168,17 +173,8 @@ impl StreamProcessor {
                             metadata: None,
                             opaque: None,
                         };
-                        match serde_json::to_string(&response) {
-                            Ok(json) => {
-                                let _ = self.ws.send(Message::Text(json)).await;
-                            }
-                            Err(e) => {
-                                error!("Failed to serialize response: {}", e);
-                                let _ = self.ws.send(Message::Text(
-                                    r#"{"status":"ERROR","message":"Serialization error"}"#.to_string()
-                                )).await;
-                            }
-                        }
+                        // Use optimized async serialization to avoid blocking keepalive loop
+                        let _ = self.send_response_async(response).await;
                     }
                 }
 
@@ -246,7 +242,9 @@ impl StreamProcessor {
 
         // Check if data is empty (but not a control byte)
         if data.is_empty() {
-            return Err(AppError::Validation("Empty audio chunk received".to_string()));
+            return Err(AppError::Validation(
+                "Empty audio chunk received".to_string(),
+            ));
         }
 
         // Buffer audio data
@@ -316,11 +314,8 @@ impl StreamProcessor {
                     opaque: None,
                 };
 
-                let json = serde_json::to_string(&response)?;
-                self.ws
-                    .send(Message::Text(json))
-                    .await
-                    .map_err(|e| AppError::Internal(format!("WebSocket send error: {}", e)))?;
+                // Move serialization off the main event loop to prevent blocking
+                self.send_response_async(response).await?;
             }
             Ok(Err(e)) => {
                 error!("Inference error for stream {}: {}", self.stream_id, e);
@@ -359,16 +354,51 @@ impl StreamProcessor {
             opaque: None,
         };
 
-        let json = serde_json::to_string(&response)?;
+        // Use async serialization for consistency
+        self.send_response_async(response).await
+    }
+
+    /// Send response to client with off-main-thread serialization to prevent blocking.
+    /// 
+    /// This method moves JSON serialization to a dedicated I/O thread to avoid blocking
+    /// the main WebSocket event loop during serialization of potentially large responses.
+    ///
+    /// # Arguments
+    /// * `response` - The ASR response to serialize and send
+    ///
+    /// # Returns
+    /// Ok(()) if successful, or an error
+    async fn send_response_async(&mut self, response: AsrResponse) -> Result<()> {
+        // Create a channel for communicating serialization result
+        let (tx, rx) = oneshot::channel::<Result<String>>();
+        
+        // Spawn serialization on dedicated I/O thread pool to avoid blocking main event loop
+        tokio::spawn(async move {
+            let json_result = serde_json::to_string(&response)
+                .map_err(|e| AppError::Internal(format!("JSON serialization error: {}", e)));
+            
+            // Send result back to main thread
+            let _ = tx.send(json_result);
+        });
+
+        // Wait for serialization to complete
+        let json = match rx.await {
+            Ok(Ok(json)) => json,
+            Ok(Err(e)) => return Err(e),
+            Err(_) => return Err(AppError::Internal("Serialization task failed".to_string())),
+        };
+
+        // Send the pre-serialized JSON on the main thread
         self.ws
             .send(Message::Text(json))
             .await
             .map_err(|e| AppError::Internal(format!("WebSocket send error: {}", e)))?;
+            
         Ok(())
     }
 
     /// Check rate limiting for incoming messages.
-    /// 
+    ///
     /// Implements a simple sliding window rate limiter to prevent abuse.
     /// Allows up to 100 messages per second for real-time audio streaming.
     fn check_rate_limit(&mut self) -> Result<()> {

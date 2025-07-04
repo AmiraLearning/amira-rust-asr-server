@@ -44,6 +44,18 @@ parking_lot = "0.12"
 crossbeam = "0.8"
 once_cell = "1.19"
 
+# Performance optimization dependencies
+core_affinity = "0.8"           # CPU affinity management
+wide = "0.7"                   # Additional SIMD support
+libc = "0.2"                   # For system calls (NUMA detection)
+thiserror = "1.0.69"
+uuid = { version = "1.6", features = ["v4", "serde"] }
+async-trait = "0.1"
+
+# io_uring support for Linux
+[target.'cfg(target_os = "linux")'.dependencies]
+tokio-uring = "0.4"             # High-performance io_uring for Linux
+
 # Logging and tracing
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
@@ -56,12 +68,9 @@ metrics = "0.22"
 metrics-exporter-prometheus = "0.13"
 
 # Error handling
-thiserror = "1.0"
 anyhow = "1.0"
 
 # Utilities
-uuid = { version = "1.6", features = ["v4", "serde"] }
-async-trait = "0.1"
 
 # Graceful shutdown
 tokio-util = "0.7"

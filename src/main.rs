@@ -4,8 +4,12 @@
 //! sets up the ASR pipeline and HTTP server, and starts listening for requests.
 
 use std::sync::Arc;
-use tracing::info;
-use tracing_subscriber::fmt;
+// Temporarily disabled tracing while resolving dependencies
+// use tracing::info;
+// use tracing_subscriber::fmt;
+
+// Temporary macro replacements
+macro_rules! info { ($($tt:tt)*) => { println!("INFO: {}", format_args!($($tt)*)); }; }
 
 use amira_rust_asr_server::{
     asr::{TritonAsrPipeline, Vocabulary},
@@ -17,13 +21,14 @@ use amira_rust_asr_server::{
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize tracing
-    fmt()
-        .with_target(false)
-        .with_thread_ids(true)
-        .with_level(true)
-        .json()
-        .init();
+    // Initialize tracing (temporarily disabled)
+    // fmt()
+    //     .with_target(false)
+    //     .with_thread_ids(true)
+    //     .with_level(true)
+    //     .json()
+    //     .init();
+    println!("INFO: Tracing temporarily disabled");
 
     // Load configuration
     let config = Config::from_env()?;
@@ -51,7 +56,7 @@ async fn main() -> Result<()> {
     let shared_vocabulary = Arc::new(vocabulary);
 
     // Create ASR pipeline with connection pool
-    let asr_pipeline = Arc::new(TritonAsrPipeline::new_with_pool(
+    let asr_pipeline = Arc::new(TritonAsrPipeline::new(
         triton_pool,
         shared_vocabulary.clone(),
     ));

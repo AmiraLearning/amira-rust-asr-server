@@ -8,7 +8,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::time::timeout;
-use tracing::{debug, error, warn};
+// Temporary tracing macros while resolving external dependencies
+macro_rules! debug { ($($tt:tt)*) => {}; }
+macro_rules! error { ($($tt:tt)*) => {}; }
+macro_rules! warn { ($($tt:tt)*) => {}; }
 
 /// Circuit breaker states.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

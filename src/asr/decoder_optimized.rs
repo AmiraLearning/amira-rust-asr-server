@@ -8,7 +8,9 @@ use crate::asr::zero_copy::{argmax_zero_copy, with_decoder_workspace, TensorView
 use crate::config::model::{BLANK_TOKEN_ID, MAX_SYMBOLS_PER_STEP, MAX_TOTAL_TOKENS};
 use crate::error::{AppError, Result};
 use std::future::Future;
-use tracing::{debug, warn};
+// Temporary tracing macros while resolving external dependencies
+macro_rules! debug { ($($tt:tt)*) => {}; }
+macro_rules! warn { ($($tt:tt)*) => {}; }
 
 /// Zero-copy optimized RNN-T greedy decoder.
 ///

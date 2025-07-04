@@ -7,7 +7,8 @@
 use std::env;
 use std::path::PathBuf;
 use std::time::Duration;
-use tracing::debug;
+// use tracing::debug;  // Temporarily disabled
+macro_rules! debug { ($($tt:tt)*) => {}; }
 
 use crate::error::{AppError, Result};
 
@@ -84,6 +85,106 @@ pub mod concurrency {
     pub const INFERENCE_QUEUE_SIZE: usize = 100;
 }
 
+/// Memory pool configuration constants
+pub mod memory {
+    /// Encoder output tensor size (1024 features * 100 frames)
+    pub const ENCODER_OUTPUT_SIZE: usize = 1024 * 100;
+
+    /// Raw tensor buffer size (1MB)
+    pub const TENSOR_BUFFER_SIZE: usize = 1024 * 1024;
+
+    /// Audio buffer capacity in seconds
+    pub const AUDIO_BUFFER_SECONDS: usize = 2;
+
+    /// Maximum tokens per decoding sequence
+    pub const MAX_TOKENS_PER_SEQUENCE: usize = 200;
+
+    /// Memory pool sizes
+    pub const AUDIO_BUFFER_POOL_SIZE: usize = 20;
+    pub const ENCODER_POOL_SIZE: usize = 50;
+    pub const DECODER_POOL_SIZE: usize = 100;
+    pub const WORKSPACE_POOL_SIZE: usize = 20;
+    pub const RAW_TENSOR_POOL_SIZE: usize = 30;
+
+    /// Pre-allocation sizes
+    pub const AUDIO_BUFFER_PRE_ALLOC: usize = 5;
+    pub const ENCODER_PRE_ALLOC: usize = 10;
+    pub const DECODER_PRE_ALLOC: usize = 20;
+    pub const WORKSPACE_PRE_ALLOC: usize = 5;
+    pub const RAW_TENSOR_PRE_ALLOC: usize = 5;
+}
+
+/// Connection pool configuration constants
+pub mod connection_pool {
+    /// Default maximum connections
+    pub const DEFAULT_MAX_CONNECTIONS: usize = 50;
+
+    /// Default minimum connections
+    pub const DEFAULT_MIN_CONNECTIONS: usize = 5;
+
+    /// Default connection idle timeout
+    pub const DEFAULT_IDLE_TIMEOUT_SECS: u64 = 300; // 5 minutes
+
+    /// Default connection acquisition timeout
+    pub const DEFAULT_ACQUIRE_TIMEOUT_MS: u64 = 500;
+
+    /// Default cleanup interval
+    pub const DEFAULT_CLEANUP_INTERVAL_SECS: u64 = 60;
+
+    /// Maximum connection age
+    pub const DEFAULT_MAX_CONNECTION_AGE_SECS: u64 = 3600; // 1 hour
+}
+
+/// Stream processing configuration constants
+pub mod stream_processing {
+    /// Processing chunk size in seconds
+    pub const CHUNK_SIZE_SECONDS: f32 = 2.0;
+
+    /// Leading context in seconds
+    pub const LEADING_CONTEXT_SECONDS: f32 = 1.0;
+
+    /// Trailing context in seconds
+    pub const TRAILING_CONTEXT_SECONDS: f32 = 0.5;
+
+    /// Buffer capacity in seconds
+    pub const BUFFER_CAPACITY_SECONDS: f32 = 10.0;
+
+    /// Maximum chunk size in bytes
+    pub const MAX_CHUNK_SIZE_BYTES: usize = 1024 * 1024; // 1MB
+
+    /// Rate limiting: max messages per window
+    pub const MAX_MESSAGES_PER_WINDOW: u32 = 100;
+
+    /// Rate limiting: window duration in seconds
+    pub const RATE_LIMIT_WINDOW_SECS: u64 = 1;
+}
+
+/// Centralized timeout configuration constants
+pub mod timeouts {
+    use std::time::Duration;
+
+    /// Standard inference timeout for ASR operations
+    pub const INFERENCE_TIMEOUT: Duration = Duration::from_secs(5);
+
+    /// Connection acquisition timeout from pool
+    pub const CONNECTION_ACQUIRE_TIMEOUT: Duration = Duration::from_millis(500);
+
+    /// Stream inactivity timeout before disconnection
+    pub const STREAM_INACTIVITY_TIMEOUT: Duration = Duration::from_secs(30);
+
+    /// Circuit breaker request timeout
+    pub const CIRCUIT_BREAKER_TIMEOUT: Duration = Duration::from_secs(10);
+
+    /// Keepalive check interval for WebSocket streams
+    pub const KEEPALIVE_CHECK_INTERVAL: Duration = Duration::from_millis(100);
+
+    /// Triton model inference timeout
+    pub const TRITON_INFERENCE_TIMEOUT: Duration = Duration::from_secs(5);
+
+    /// Connection pool cleanup interval
+    pub const CONNECTION_CLEANUP_INTERVAL: Duration = Duration::from_secs(60);
+}
+
 /// Application configuration loaded from environment variables
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -137,7 +238,9 @@ impl Config {
     /// Validate configuration values
     fn validate(&self) -> Result<()> {
         // Validate Triton endpoint URL
-        if !self.triton_endpoint.starts_with("http://") && !self.triton_endpoint.starts_with("https://") {
+        if !self.triton_endpoint.starts_with("http://")
+            && !self.triton_endpoint.starts_with("https://")
+        {
             return Err(AppError::Configuration(
                 "TRITON_ENDPOINT must start with http:// or https://".to_string(),
             ));
@@ -171,34 +274,37 @@ impl Config {
     }
 
     /// Validate a file path for security issues.
-    /// 
+    ///
     /// This method provides comprehensive protection against path traversal attacks
     /// by checking for various malicious patterns and ensuring the path is safe.
     fn validate_path(&self, path: &std::path::Path, field_name: &str) -> Result<()> {
         // Convert to string for analysis
         let path_str = path.to_string_lossy();
-        
+
         // Check for obvious path traversal patterns
         if path_str.contains("..") || path_str.contains("//") {
-            return Err(AppError::Configuration(
-                format!("{} contains invalid path components (.. or //)", field_name)
-            ));
+            return Err(AppError::Configuration(format!(
+                "{} contains invalid path components (.. or //)",
+                field_name
+            )));
         }
-        
+
         // Check for null bytes (can be used to bypass filters)
         if path_str.contains('\0') {
-            return Err(AppError::Configuration(
-                format!("{} contains null bytes", field_name)
-            ));
+            return Err(AppError::Configuration(format!(
+                "{} contains null bytes",
+                field_name
+            )));
         }
-        
+
         // Check for control characters that shouldn't be in file paths
         if path_str.chars().any(|c| c.is_control() && c != '\t') {
-            return Err(AppError::Configuration(
-                format!("{} contains invalid control characters", field_name)
-            ));
+            return Err(AppError::Configuration(format!(
+                "{} contains invalid control characters",
+                field_name
+            )));
         }
-        
+
         // Attempt to canonicalize the path to resolve any .. components
         // This is more robust than string matching
         match path.canonicalize() {
@@ -206,14 +312,15 @@ impl Config {
                 // Check if the canonical path is still within reasonable bounds
                 // For security, we might want to ensure it's within a specific directory
                 let canonical_str = canonical_path.to_string_lossy();
-                
+
                 // Additional check: ensure the canonicalized path doesn't contain suspicious patterns
                 if canonical_str.contains("..") {
-                    return Err(AppError::Configuration(
-                        format!("{} resolves to a path with traversal components", field_name)
-                    ));
+                    return Err(AppError::Configuration(format!(
+                        "{} resolves to a path with traversal components",
+                        field_name
+                    )));
                 }
-                
+
                 // Optionally, you could add a check to ensure the path is within an allowed directory:
                 // if !canonical_path.starts_with("/allowed/directory") {
                 //     return Err(AppError::Configuration(
@@ -224,17 +331,21 @@ impl Config {
             Err(_) => {
                 // If canonicalization fails, the path might not exist yet, which could be okay
                 // depending on your use case. For vocabulary files, we might want to be more strict.
-                debug!("Path canonicalization failed for {}: {:?} (file may not exist yet)", field_name, path);
-                
+                debug!(
+                    "Path canonicalization failed for {}: {:?} (file may not exist yet)",
+                    field_name, path
+                );
+
                 // Still perform basic validation even if canonicalization fails
                 if path_str.len() > 4096 {
-                    return Err(AppError::Configuration(
-                        format!("{} is too long (max 4096 characters)", field_name)
-                    ));
+                    return Err(AppError::Configuration(format!(
+                        "{} is too long (max 4096 characters)",
+                        field_name
+                    )));
                 }
             }
         }
-        
+
         Ok(())
     }
 }

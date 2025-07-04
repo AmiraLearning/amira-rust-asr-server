@@ -14,9 +14,12 @@ use axum::{
 use serde::Deserialize;
 use tower::ServiceBuilder;
 use tower_http::cors::CorsLayer;
-use tracing::{error, info};
+// use tracing::{error, info};  // Temporarily disabled
+macro_rules! error { ($($tt:tt)*) => {}; }
+macro_rules! info { ($($tt:tt)*) => {}; }
 
 use crate::asr::types::{AsrResponse, StreamStatus};
+use crate::asr::AsrPipeline;
 use crate::config::audio::{MAX_BATCH_AUDIO_LENGTH_SECS, SAMPLE_RATE};
 use crate::error::{AppError, Result};
 use crate::server::stream::create_stream;
@@ -26,7 +29,7 @@ use crate::server::AppState;
 struct StreamCleanupGuard<'a> {
     stream_id: String,
     state: Arc<AppState>,
-    #[allow(dead_code)]  // Field is used for RAII - permit is held until drop
+    #[allow(dead_code)] // Field is used for RAII - permit is held until drop
     permit: Option<tokio::sync::SemaphorePermit<'a>>,
 }
 
@@ -68,7 +71,9 @@ impl BatchRequest {
     pub fn validate(&self) -> Result<()> {
         // Check audio buffer size
         if self.audio_buffer.is_empty() {
-            return Err(AppError::Validation("Audio buffer cannot be empty".to_string()));
+            return Err(AppError::Validation(
+                "Audio buffer cannot be empty".to_string(),
+            ));
         }
 
         // Check if audio buffer length is even (16-bit samples)
@@ -99,9 +104,8 @@ impl BatchRequest {
 
         // Validate opaque data size if present
         if let Some(ref opaque) = self.opaque {
-            let opaque_str = serde_json::to_string(opaque).map_err(|_| {
-                AppError::Validation("Invalid opaque data format".to_string())
-            })?;
+            let opaque_str = serde_json::to_string(opaque)
+                .map_err(|_| AppError::Validation("Invalid opaque data format".to_string()))?;
             if opaque_str.len() > 10_000 {
                 return Err(AppError::Validation(
                     "Opaque data too large (max: 10KB)".to_string(),

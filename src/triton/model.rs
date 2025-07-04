@@ -48,6 +48,12 @@ pub struct PreprocessorInput {
     pub waveform: Vec<f32>,
 }
 
+/// Zero-copy input for the preprocessor model.
+pub struct PreprocessorInputRef<'a> {
+    /// The audio waveform (f32 samples)
+    pub waveform: &'a [f32],
+}
+
 /// Output from the preprocessor model.
 pub struct PreprocessorOutput {
     /// The extracted features (mel spectrograms)
@@ -59,6 +65,92 @@ pub struct PreprocessorOutput {
 
 /// The preprocessor model converts raw audio to features (mel spectrograms).
 pub struct PreprocessorModel;
+
+impl PreprocessorModel {
+    /// Zero-copy inference method that avoids allocations in the hot path
+    pub async fn infer_zero_copy(&self, client: &mut TritonClient, input: PreprocessorInputRef<'_>) -> Result<PreprocessorOutput> {
+        let waveform_len = input.waveform.len() as i64;
+
+        // Build inference request with borrowed data
+        let request = client
+            .request_builder(self.name())
+            .with_input(InferInputTensor {
+                name: "waveforms".to_string(),
+                datatype: "FP32".to_string(),
+                shape: vec![1, waveform_len],
+                contents: Some(InferTensorContents {
+                    fp32_contents: input.waveform.to_vec(), // Still need to copy for protobuf
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .with_input(InferInputTensor {
+                name: "waveforms_lens".to_string(),
+                datatype: "INT64".to_string(),
+                shape: vec![1],
+                contents: Some(InferTensorContents {
+                    int64_contents: vec![waveform_len],
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .with_output(InferRequestedOutputTensor {
+                name: "features".to_string(),
+                ..Default::default()
+            })
+            .with_output(InferRequestedOutputTensor {
+                name: "features_length".to_string(),
+                ..Default::default()
+            })
+            .build();
+
+        // Execute inference
+        let response = client.infer(request).await?;
+
+        // Process response (same as regular method) 
+        let expected_tensors = {
+            let mut map = HashMap::new();
+
+            map.insert(
+                "features".to_string(),
+                TensorDef::new(
+                    "features",
+                    TensorDataType::Float32,
+                    TensorShape::new(vec![1, 80, -1]),
+                ),
+            );
+
+            map.insert(
+                "features_length".to_string(),
+                TensorDef::new(
+                    "features_length",
+                    TensorDataType::Int64,
+                    TensorShape::new(vec![1]),
+                ),
+            );
+
+            map
+        };
+
+        let tensors = parse_raw_tensors(&response, &expected_tensors)?;
+
+        let features_tensor = tensors.get("features").ok_or_else(|| {
+            AppError::Model("Missing features tensor in preprocessor response".to_string())
+        })?;
+
+        let features_length_tensor = tensors.get("features_length").ok_or_else(|| {
+            AppError::Model("Missing features_length tensor in preprocessor response".to_string())
+        })?;
+
+        let features = features_tensor.as_f32()?;
+        let features_len = features_length_tensor.as_scalar_i64()?;
+
+        Ok(PreprocessorOutput {
+            features,
+            features_len,
+        })
+    }
+}
 
 #[async_trait]
 impl TritonModel for PreprocessorModel {
@@ -282,6 +374,21 @@ pub struct DecoderJointInput {
     pub states_2: Vec<f32>,
 }
 
+/// Zero-copy input for the decoder_joint model.
+pub struct DecoderJointInputRef<'a> {
+    /// The encoder outputs for a single time step
+    pub encoder_frame: &'a [f32],
+
+    /// The token IDs of the current hypothesis
+    pub targets: &'a [i32],
+
+    /// The current decoder state (first part)
+    pub states_1: &'a [f32],
+
+    /// The current decoder state (second part)
+    pub states_2: &'a [f32],
+}
+
 /// Output from the decoder_joint model.
 pub struct DecoderJointOutput {
     /// The logits for the next token
@@ -296,6 +403,145 @@ pub struct DecoderJointOutput {
 
 /// The decoder_joint model combines encoder outputs and decoder state to predict the next token.
 pub struct DecoderJointModel;
+
+impl DecoderJointModel {
+    /// Zero-copy inference method that avoids allocations in the hot path
+    pub async fn infer_zero_copy(&self, client: &mut TritonClient, input: DecoderJointInputRef<'_>) -> Result<DecoderJointOutput> {
+        let target_length = input.targets.len() as i32;
+
+        // Build inference request with borrowed data
+        let request = client
+            .request_builder(self.name())
+            .with_input(InferInputTensor {
+                name: "encoder_outputs".to_string(),
+                datatype: "FP32".to_string(),
+                shape: vec![1, 1024, 1],
+                contents: Some(InferTensorContents {
+                    fp32_contents: input.encoder_frame.to_vec(), // Still need to copy for protobuf
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .with_input(InferInputTensor {
+                name: "targets".to_string(),
+                datatype: "INT32".to_string(),
+                shape: vec![1, target_length as i64],
+                contents: Some(InferTensorContents {
+                    int_contents: input.targets.to_vec(), // Still need to copy for protobuf
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .with_input(InferInputTensor {
+                name: "target_length".to_string(),
+                datatype: "INT32".to_string(),
+                shape: vec![1],
+                contents: Some(InferTensorContents {
+                    int_contents: vec![target_length],
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .with_input(InferInputTensor {
+                name: "input_states_1".to_string(),
+                datatype: "FP32".to_string(),
+                shape: vec![2, 1, model::DECODER_STATE_SIZE as i64],
+                contents: Some(InferTensorContents {
+                    fp32_contents: input.states_1.to_vec(), // Still need to copy for protobuf
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .with_input(InferInputTensor {
+                name: "input_states_2".to_string(),
+                datatype: "FP32".to_string(),
+                shape: vec![2, 1, model::DECODER_STATE_SIZE as i64],
+                contents: Some(InferTensorContents {
+                    fp32_contents: input.states_2.to_vec(), // Still need to copy for protobuf
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .with_output(InferRequestedOutputTensor {
+                name: "outputs".to_string(),
+                ..Default::default()
+            })
+            .with_output(InferRequestedOutputTensor {
+                name: "prednet_lengths".to_string(),
+                ..Default::default()
+            })
+            .with_output(InferRequestedOutputTensor {
+                name: "output_states_1".to_string(),
+                ..Default::default()
+            })
+            .with_output(InferRequestedOutputTensor {
+                name: "output_states_2".to_string(),
+                ..Default::default()
+            })
+            .build();
+
+        // Execute inference
+        let response = client.infer(request).await?;
+
+        // Process response (same as regular method)
+        let expected_tensors = {
+            let mut map = HashMap::new();
+
+            map.insert(
+                "outputs".to_string(),
+                TensorDef::new(
+                    "outputs",
+                    TensorDataType::Float32,
+                    TensorShape::new(vec![1, model::VOCABULARY_SIZE as i64]),
+                ),
+            );
+
+            map.insert(
+                "output_states_1".to_string(),
+                TensorDef::new(
+                    "output_states_1",
+                    TensorDataType::Float32,
+                    TensorShape::new(vec![2, 1, model::DECODER_STATE_SIZE as i64]),
+                ),
+            );
+
+            map.insert(
+                "output_states_2".to_string(),
+                TensorDef::new(
+                    "output_states_2",
+                    TensorDataType::Float32,
+                    TensorShape::new(vec![2, 1, model::DECODER_STATE_SIZE as i64]),
+                ),
+            );
+
+            map
+        };
+
+        let tensors = parse_raw_tensors(&response, &expected_tensors)?;
+
+        let logits_tensor = tensors.get("outputs").ok_or_else(|| {
+            AppError::Model("Missing outputs tensor in decoder_joint response".to_string())
+        })?;
+
+        let states_1_tensor = tensors.get("output_states_1").ok_or_else(|| {
+            AppError::Model("Missing output_states_1 tensor in decoder_joint response".to_string())
+        })?;
+
+        let states_2_tensor = tensors.get("output_states_2").ok_or_else(|| {
+            AppError::Model("Missing output_states_2 tensor in decoder_joint response".to_string())
+        })?;
+
+        let logits = logits_tensor.as_f32()?;
+        let new_states_1 = states_1_tensor.as_f32()?;
+        let new_states_2 = states_2_tensor.as_f32()?;
+
+        Ok(DecoderJointOutput {
+            logits,
+            new_states_1,
+            new_states_2,
+        })
+    }
+}
 
 #[async_trait]
 impl TritonModel for DecoderJointModel {

@@ -9,7 +9,9 @@ use axum::{
     Json,
 };
 use serde_json::json;
+use std::future::Future;
 use std::io;
+use std::time::Duration;
 use thiserror::Error;
 use tonic::Status as TonicStatus;
 
@@ -82,3 +84,76 @@ impl IntoResponse for AppError {
 
 /// Convenience type alias for Results with AppError.
 pub type Result<T> = std::result::Result<T, AppError>;
+
+/// Extension trait for adding context to errors.
+pub trait ErrorContext<T> {
+    /// Add context to the error.
+    fn with_context<F>(self, f: F) -> Result<T>
+    where
+        F: FnOnce() -> String;
+
+    /// Add static context to the error.
+    fn with_static_context(self, context: &'static str) -> Result<T>;
+}
+
+impl<T, E> ErrorContext<T> for std::result::Result<T, E>
+where
+    E: std::error::Error + Send + Sync + 'static,
+{
+    fn with_context<F>(self, f: F) -> Result<T>
+    where
+        F: FnOnce() -> String,
+    {
+        self.map_err(|e| AppError::Internal(format!("{}: {}", f(), e)))
+    }
+
+    fn with_static_context(self, context: &'static str) -> Result<T> {
+        self.map_err(|e| AppError::Internal(format!("{}: {}", context, e)))
+    }
+}
+
+/// Standardized async operation with timeout handling.
+///
+/// This function provides a consistent pattern for async operations that need
+/// timeout handling, proper error conversion, and context information.
+pub async fn with_timeout<T, E, F>(
+    operation: F,
+    timeout_duration: Duration,
+    context: &'static str,
+) -> Result<T>
+where
+    F: Future<Output = std::result::Result<T, E>>,
+    E: std::error::Error + Send + Sync + 'static,
+{
+    match tokio::time::timeout(timeout_duration, operation).await {
+        Ok(Ok(result)) => Ok(result),
+        Ok(Err(e)) => Err(AppError::Internal(format!("{}: {}", context, e))),
+        Err(_) => Err(AppError::Timeout(format!(
+            "{}: operation timed out after {:?}",
+            context, timeout_duration
+        ))),
+    }
+}
+
+/// Standardized async operation with timeout and custom error conversion.
+///
+/// This variant allows for custom error conversion from the operation's error type.
+pub async fn with_timeout_and_convert<T, E, F, C>(
+    operation: F,
+    timeout_duration: Duration,
+    context: &'static str,
+    error_converter: C,
+) -> Result<T>
+where
+    F: Future<Output = std::result::Result<T, E>>,
+    C: FnOnce(E) -> AppError,
+{
+    match tokio::time::timeout(timeout_duration, operation).await {
+        Ok(Ok(result)) => Ok(result),
+        Ok(Err(e)) => Err(error_converter(e)),
+        Err(_) => Err(AppError::Timeout(format!(
+            "{}: operation timed out after {:?}",
+            context, timeout_duration
+        ))),
+    }
+}

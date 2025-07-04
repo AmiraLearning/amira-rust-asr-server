@@ -7,7 +7,7 @@ use dashmap::DashMap;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 
-use crate::asr::{AsrPipeline, Vocabulary};
+use crate::asr::{TritonAsrPipeline, Vocabulary};
 use crate::server::metrics::ServiceMetrics;
 use crate::server::stream::StreamHandle;
 
@@ -15,7 +15,7 @@ use crate::server::stream::StreamHandle;
 #[derive(Clone)]
 pub struct AppState {
     /// The ASR pipeline implementation
-    pub asr_pipeline: Arc<dyn AsrPipeline>,
+    pub asr_pipeline: Arc<TritonAsrPipeline>,
 
     /// Vocabulary for token decoding
     pub vocabulary: Arc<Vocabulary>,
@@ -45,7 +45,7 @@ impl AppState {
     /// # Returns
     /// A new application state
     pub fn new(
-        asr_pipeline: Arc<dyn AsrPipeline>,
+        asr_pipeline: Arc<TritonAsrPipeline>,
         vocabulary: Arc<Vocabulary>,
         max_concurrent_streams: usize,
         max_concurrent_batches: usize,

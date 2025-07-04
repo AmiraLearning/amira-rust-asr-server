@@ -6,15 +6,52 @@
 use amira_rust_asr_server::reliability::{
     circuit_breaker::{CircuitBreaker, CircuitBreakerConfig},
     graceful_shutdown::GracefulShutdown,
-    metrics::AsrMetrics,
-    tracing::{init_tracing, TracingConfig},
+    // metrics::AsrMetrics,  // Temporarily disabled - requires external metrics crates
+    // tracing_config::{init_tracing, TracingConfig},  // Temporarily disabled - requires external tracing crates
 };
+
+// Temporary mock for metrics until external deps are restored
+struct MockAsrMetrics;
+
+impl MockAsrMetrics {
+    fn new() -> Result<Self, String> {
+        Ok(Self)
+    }
+
+    fn router(&self) -> Router {
+        Router::new()
+    }
+}
+
+struct MockTracingConfig {
+    service_name: String,
+    jaeger_endpoint: Option<String>,
+    enable_console: bool,
+    log_level: String,
+}
+
+fn mock_init_tracing(_config: MockTracingConfig) -> Result<(), String> {
+    Ok(())
+}
+
+// Type aliases for the temporarily mocked parts
+type AsrMetrics = MockAsrMetrics;
+type TracingConfig = MockTracingConfig;
+fn init_tracing(config: TracingConfig) -> Result<(), String> {
+    mock_init_tracing(config)
+}
 use axum::{extract::State, http::StatusCode, response::Json, routing::get, Router};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
-use tracing::{error, info, warn};
+// Temporarily disabled tracing while resolving dependencies
+// use tracing::{error, info, warn};
+
+// Temporary macro replacements
+macro_rules! error { ($($tt:tt)*) => { println!("ERROR: {}", format_args!($($tt)*)); }; }
+macro_rules! info { ($($tt:tt)*) => { println!("INFO: {}", format_args!($($tt)*)); }; }
+macro_rules! warn { ($($tt:tt)*) => { println!("WARN: {}", format_args!($($tt)*)); }; }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -112,7 +149,7 @@ struct AppState {
 }
 
 async fn health_check() -> Json<Value> {
-    amira_rust_asr_server::reliability::metrics::record_request_start("health");
+    // Temporarily disabled: amira_rust_asr_server::reliability::metrics::record_request_start("health");
 
     Json(json!({
         "status": "healthy",
@@ -127,7 +164,7 @@ async fn health_check() -> Json<Value> {
 }
 
 async fn demo_success(State(state): State<AppState>) -> Json<Value> {
-    amira_rust_asr_server::reliability::metrics::record_request_start("demo_success");
+    // Temporarily disabled: amira_rust_asr_server::reliability::metrics::record_request_start("demo_success");
 
     // Simulate successful operation through circuit breaker
     let result = state
@@ -153,7 +190,7 @@ async fn demo_success(State(state): State<AppState>) -> Json<Value> {
 }
 
 async fn demo_failure(State(state): State<AppState>) -> (StatusCode, Json<Value>) {
-    amira_rust_asr_server::reliability::metrics::record_request_start("demo_failure");
+    // Temporarily disabled: amira_rust_asr_server::reliability::metrics::record_request_start("demo_failure");
 
     // Simulate failing operation through circuit breaker
     let result = state
@@ -170,10 +207,10 @@ async fn demo_failure(State(state): State<AppState>) -> (StatusCode, Json<Value>
     let response = match result {
         Ok(_) => unreachable!(),
         Err(e) => {
-            amira_rust_asr_server::reliability::metrics::record_request_failure(
-                "demo_failure",
-                "simulated",
-            );
+            // Temporarily disabled: amira_rust_asr_server::reliability::metrics::record_request_failure(
+            //     "demo_failure",
+            //     "simulated",
+            // );
             json!({
                 "status": "error",
                 "error": e.to_string(),

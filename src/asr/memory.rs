@@ -3,8 +3,13 @@
 //! This module provides object pools for frequently allocated data structures
 //! to eliminate allocation overhead in hot paths.
 
+use crate::config::{audio, memory as config, model};
+use crate::error::{AppError, Result};
 use parking_lot::Mutex;
 use std::collections::VecDeque;
+
+// Temporary macro for tracing
+macro_rules! error { ($($tt:tt)*) => {}; }
 
 /// A generic object pool for reusing allocations.
 pub struct ObjectPool<T> {
@@ -76,28 +81,28 @@ impl<T> ObjectPool<T> {
 }
 
 /// A pooled object that automatically returns to the pool when dropped.
-/// 
+///
 /// # Safety Contract
-/// 
+///
 /// This object can be accessed via:
 /// - `Deref`/`DerefMut` traits: Convenient but may panic if object was taken
-/// - `get()`/`get_mut()` methods: Safe, returns `Result` 
+/// - `get()`/`get_mut()` methods: Safe, returns `Result`
 /// - `take()` method: Consumes the object, preventing further access
-/// 
+///
 /// Once `take()` is called, any subsequent access via Deref traits will panic.
 /// This is by design to prevent use-after-take bugs.
-/// 
+///
 /// # Example
-/// 
+///
 /// ```rust
 /// let mut pooled = pool.get();
 /// pooled.push(42);  // Works via Deref
-/// 
+///
 /// // Safe access
 /// if let Ok(obj) = pooled.get() {
 ///     println!("Length: {}", obj.len());
 /// }
-/// 
+///
 /// // Take ownership (object can't be accessed after this)
 /// let owned = pooled.take().unwrap();
 /// // pooled.len(); // Would panic!
@@ -109,18 +114,24 @@ pub struct PooledObject<'a, T> {
 
 impl<'a, T> PooledObject<'a, T> {
     /// Get a mutable reference to the contained object.
-    pub fn get_mut(&mut self) -> Result<&mut T, &'static str> {
-        self.obj.as_mut().ok_or("Object already taken")
+    pub fn get_mut(&mut self) -> Result<&mut T> {
+        self.obj
+            .as_mut()
+            .ok_or_else(|| AppError::Internal("Object already taken".to_string()))
     }
 
     /// Get an immutable reference to the contained object.
-    pub fn get(&self) -> Result<&T, &'static str> {
-        self.obj.as_ref().ok_or("Object already taken")
+    pub fn get(&self) -> Result<&T> {
+        self.obj
+            .as_ref()
+            .ok_or_else(|| AppError::Internal("Object already taken".to_string()))
     }
 
     /// Take ownership of the object (won't return to pool).
-    pub fn take(mut self) -> Result<T, &'static str> {
-        self.obj.take().ok_or("Object already taken")
+    pub fn take(mut self) -> Result<T> {
+        self.obj
+            .take()
+            .ok_or_else(|| AppError::Internal("Object already taken".to_string()))
     }
 }
 
@@ -136,9 +147,9 @@ impl<'a, T> std::ops::Deref for PooledObject<'a, T> {
     type Target = T;
 
     /// Dereference the pooled object.
-    /// 
+    ///
     /// # Panics
-    /// 
+    ///
     /// Panics if the object has already been taken via `take()`. This indicates
     /// a programming error - the object should not be accessed after taking.
     /// Use `get()` method for non-panicking access.
@@ -147,11 +158,14 @@ impl<'a, T> std::ops::Deref for PooledObject<'a, T> {
             Some(obj) => obj,
             None => {
                 // In debug builds, provide detailed error information
-                debug_assert!(false, "Attempted to dereference a taken PooledObject. This is a programming error.");
-                
+                debug_assert!(
+                    false,
+                    "Attempted to dereference a taken PooledObject. This is a programming error."
+                );
+
                 // Log the error for debugging
-                tracing::error!("Attempted to dereference taken PooledObject - this indicates a bug in object lifecycle management");
-                
+                error!("Attempted to dereference taken PooledObject - this indicates a bug in object lifecycle management");
+
                 // Unfortunately, Deref trait requires returning a reference, not Result
                 // This panic is the only safe option to prevent undefined behavior
                 panic!("PooledObject already taken - use get() method for safe access or fix object lifecycle")
@@ -162,9 +176,9 @@ impl<'a, T> std::ops::Deref for PooledObject<'a, T> {
 
 impl<'a, T> std::ops::DerefMut for PooledObject<'a, T> {
     /// Mutably dereference the pooled object.
-    /// 
+    ///
     /// # Panics
-    /// 
+    ///
     /// Panics if the object has already been taken via `take()`. This indicates
     /// a programming error - the object should not be accessed after taking.
     /// Use `get_mut()` method for non-panicking access.
@@ -174,10 +188,10 @@ impl<'a, T> std::ops::DerefMut for PooledObject<'a, T> {
             None => {
                 // In debug builds, provide detailed error information
                 debug_assert!(false, "Attempted to mutably dereference a taken PooledObject. This is a programming error.");
-                
+
                 // Log the error for debugging
-                tracing::error!("Attempted to mutably dereference taken PooledObject - this indicates a bug in object lifecycle management");
-                
+                error!("Attempted to mutably dereference taken PooledObject - this indicates a bug in object lifecycle management");
+
                 // Unfortunately, DerefMut trait requires returning a reference, not Result
                 // This panic is the only safe option to prevent undefined behavior
                 panic!("PooledObject already taken - use get_mut() method for safe access or fix object lifecycle")
@@ -215,46 +229,61 @@ pub struct AsrMemoryPools {
 
     /// Pool for raw tensor data.
     pub raw_tensors: ObjectPool<Vec<u8>>,
+
+    /// Pool for zero-copy decoder workspaces.
+    pub decoder_workspaces: ObjectPool<crate::asr::zero_copy::DecoderWorkspace>,
 }
 
 impl AsrMemoryPools {
     /// Create memory pools optimized for ASR workloads.
     pub fn new() -> Self {
-        const AUDIO_SAMPLE_RATE: usize = 16000;
-        const ENCODER_OUTPUT_SIZE: usize = 1024 * 100; // 1024 features * 100 frames
-        const DECODER_STATE_SIZE: usize = 640;
-        const VOCABULARY_SIZE: usize = 1030;
-        const TENSOR_BUFFER_SIZE: usize = 1024 * 1024; // 1MB
-
         Self {
             audio_buffers: ObjectPool::new(
-                || Vec::with_capacity(AUDIO_SAMPLE_RATE * 2), // 2 seconds capacity
-                20,                                           // max 20 buffers
-                5,                                            // pre-allocate 5
+                || Vec::with_capacity(audio::SAMPLE_RATE as usize * config::AUDIO_BUFFER_SECONDS),
+                config::AUDIO_BUFFER_POOL_SIZE,
+                config::AUDIO_BUFFER_PRE_ALLOC,
             ),
 
             encoder_inputs: ObjectPool::new(
-                || Vec::with_capacity(ENCODER_OUTPUT_SIZE),
-                50, // max 50 buffers
-                10, // pre-allocate 10
+                || Vec::with_capacity(config::ENCODER_OUTPUT_SIZE),
+                config::ENCODER_POOL_SIZE,
+                config::ENCODER_PRE_ALLOC,
             ),
 
-            encoder_outputs: ObjectPool::new(|| Vec::with_capacity(ENCODER_OUTPUT_SIZE), 50, 10),
+            encoder_outputs: ObjectPool::new(
+                || Vec::with_capacity(config::ENCODER_OUTPUT_SIZE),
+                config::ENCODER_POOL_SIZE,
+                config::ENCODER_PRE_ALLOC,
+            ),
 
             decoder_targets: ObjectPool::new(
-                || Vec::with_capacity(200), // max 200 tokens
-                100,                        // max 100 buffers
-                20,                         // pre-allocate 20
+                || Vec::with_capacity(config::MAX_TOKENS_PER_SEQUENCE),
+                config::DECODER_POOL_SIZE,
+                config::DECODER_PRE_ALLOC,
             ),
 
-            decoder_states: ObjectPool::new(|| Vec::with_capacity(DECODER_STATE_SIZE), 100, 20),
+            decoder_states: ObjectPool::new(
+                || Vec::with_capacity(model::DECODER_STATE_SIZE),
+                config::DECODER_POOL_SIZE,
+                config::DECODER_PRE_ALLOC,
+            ),
 
-            logits: ObjectPool::new(|| Vec::with_capacity(VOCABULARY_SIZE), 100, 20),
+            logits: ObjectPool::new(
+                || Vec::with_capacity(model::VOCABULARY_SIZE),
+                config::DECODER_POOL_SIZE,
+                config::DECODER_PRE_ALLOC,
+            ),
 
             raw_tensors: ObjectPool::new(
-                || Vec::with_capacity(TENSOR_BUFFER_SIZE),
-                30, // max 30MB total
-                5,  // pre-allocate 5MB
+                || Vec::with_capacity(config::TENSOR_BUFFER_SIZE),
+                config::RAW_TENSOR_POOL_SIZE,
+                config::RAW_TENSOR_PRE_ALLOC,
+            ),
+
+            decoder_workspaces: ObjectPool::new(
+                || crate::asr::zero_copy::DecoderWorkspace::new(),
+                config::WORKSPACE_POOL_SIZE,
+                config::WORKSPACE_PRE_ALLOC,
             ),
         }
     }
@@ -269,6 +298,7 @@ impl AsrMemoryPools {
             decoder_states: self.decoder_states.stats(),
             logits: self.logits.stats(),
             raw_tensors: self.raw_tensors.stats(),
+            decoder_workspaces: self.decoder_workspaces.stats(),
         }
     }
 }
@@ -289,13 +319,14 @@ pub struct AsrMemoryStats {
     pub decoder_states: PoolStats,
     pub logits: PoolStats,
     pub raw_tensors: PoolStats,
+    pub decoder_workspaces: PoolStats,
 }
 
 impl std::fmt::Display for AsrMemoryStats {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "ASR Memory Pools - Audio: {}/{}, Encoder: {}/{}, Decoder: {}/{}, Raw: {}/{}",
+            "ASR Memory Pools - Audio: {}/{}, Encoder: {}/{}, Decoder: {}/{}, Raw: {}/{}, Workspaces: {}/{}",
             self.audio_buffers.available,
             self.audio_buffers.max_size,
             self.encoder_inputs.available,
@@ -303,7 +334,9 @@ impl std::fmt::Display for AsrMemoryStats {
             self.decoder_targets.available,
             self.decoder_targets.max_size,
             self.raw_tensors.available,
-            self.raw_tensors.max_size
+            self.raw_tensors.max_size,
+            self.decoder_workspaces.available,
+            self.decoder_workspaces.max_size
         )
     }
 }
@@ -317,6 +350,12 @@ pub fn global_pools() -> &'static AsrMemoryPools {
     &GLOBAL_POOLS
 }
 
+/// Get a decoder workspace from the global pool.
+/// This is a convenience method that replaces the thread-local approach.
+pub fn get_decoder_workspace() -> PooledObject<'static, crate::asr::zero_copy::DecoderWorkspace> {
+    global_pools().decoder_workspaces.get()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -325,7 +364,7 @@ mod tests {
     fn test_object_pool() {
         let pool = ObjectPool::new(|| Vec::<i32>::new(), 5, 0); // Start with empty pool
 
-        // Get an object 
+        // Get an object
         let mut obj1 = pool.get();
         assert_eq!(obj1.len(), 0);
         obj1.push(42);

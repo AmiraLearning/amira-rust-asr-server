@@ -69,19 +69,19 @@ unsafe fn bytes_to_f32_avx2_complex(input: &[u8], output: &mut Vec<f32>) {
 
         // Convert i16 to i32, then to f32 and normalize
         // i16_lo contains elements 0-7, i16_hi contains elements 8-15
-        let i32_lo = _mm256_cvtepi16_epi32(i16_lo);  // Convert elements 0-7
-        let i32_hi = _mm256_cvtepi16_epi32(i16_hi);  // Convert elements 8-15
+        let i32_lo = _mm256_cvtepi16_epi32(i16_lo); // Convert elements 0-7
+        let i32_hi = _mm256_cvtepi16_epi32(i16_hi); // Convert elements 8-15
 
-        let f32_lo = _mm256_mul_ps(_mm256_cvtepi32_ps(i32_lo), scale);  // Elements 0-7
-        let f32_hi = _mm256_mul_ps(_mm256_cvtepi32_ps(i32_hi), scale);  // Elements 8-15
+        let f32_lo = _mm256_mul_ps(_mm256_cvtepi32_ps(i32_lo), scale); // Elements 0-7
+        let f32_hi = _mm256_mul_ps(_mm256_cvtepi32_ps(i32_hi), scale); // Elements 8-15
 
         // Extend output vector - safe method (16 i16 -> 16 f32)
         let old_len = output.len();
         output.resize(old_len + 16, 0.0);
 
         // Store results (each vector contains 8 f32 values)
-        _mm256_storeu_ps(output.as_mut_ptr().add(old_len), f32_lo);      // 0-7
-        _mm256_storeu_ps(output.as_mut_ptr().add(old_len + 8), f32_hi);  // 8-15
+        _mm256_storeu_ps(output.as_mut_ptr().add(old_len), f32_lo); // 0-7
+        _mm256_storeu_ps(output.as_mut_ptr().add(old_len + 8), f32_hi); // 8-15
     }
 
     // Handle remainder with scalar code
@@ -330,7 +330,7 @@ unsafe fn transpose_encoder_output_avx512(
                         // Additional safety check: ensure we won't read beyond input bounds
                         let max_src_idx = (f + 15) * time_steps + t;
                         let max_dst_idx = t * features + f + 15;
-                        
+
                         if max_src_idx < input.len() && max_dst_idx < output.len() {
                             let values = _mm512_i32gather_ps(gather_indices, src_ptr, 4);
                             _mm512_storeu_ps(dst_ptr, values);

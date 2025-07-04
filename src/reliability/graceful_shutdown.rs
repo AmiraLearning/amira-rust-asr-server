@@ -6,7 +6,11 @@
 use std::time::Duration;
 use tokio::signal;
 use tokio::sync::broadcast;
-use tracing::{debug, error, info, warn};
+// Temporary tracing macros while resolving external dependencies
+macro_rules! debug { ($($tt:tt)*) => {}; }
+macro_rules! error { ($($tt:tt)*) => {}; }
+macro_rules! info { ($($tt:tt)*) => {}; }
+macro_rules! warn { ($($tt:tt)*) => {}; }
 
 /// Handle for managing graceful shutdown.
 #[derive(Clone)]

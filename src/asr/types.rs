@@ -9,7 +9,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use tracing::debug;
+// use tracing::debug;  // Temporarily disabled
+macro_rules! debug { ($($tt:tt)*) => {}; }
 
 // Constants for audio processing and transcript weaving
 /// Expected ratio for silence detection

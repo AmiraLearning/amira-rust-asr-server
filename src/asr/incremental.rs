@@ -10,10 +10,12 @@ use crate::asr::types::{
     AccumulatedPredictions, DecoderState, SeqSlice, Transcription, Vocabulary, W2V_SAMPLE_RATE,
 };
 use crate::asr::weaving::{is_overlap_silence, weave_transcript_segs};
-use crate::asr::AsrPipeline;
+use crate::asr::{AsrPipeline, TritonAsrPipeline};
 use crate::error::Result;
 
-use tracing::{debug, info};
+// use tracing::{debug, info};  // Temporarily disabled
+macro_rules! debug { ($($tt:tt)*) => {}; }
+macro_rules! info { ($($tt:tt)*) => {}; }
 
 /// Default minimum alignment score for transcript weaving
 const MIN_ALIGNMENT_SCORE: f32 = 0.01;
@@ -28,25 +30,15 @@ fn sample_index_to_logit_index(idx: usize) -> usize {
     ((idx as f32 * 299.0) / 96000.0) as usize
 }
 
-/// Convert f32 samples to 16-bit PCM bytes
-fn f32_samples_to_bytes(samples: &[f32]) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(samples.len() * 2);
-    for &sample in samples {
-        // Convert normalized (-1.0 to 1.0) to i16 range
-        let value = (sample * 32767.0) as i16;
-        // Convert to little-endian bytes
-        bytes.extend_from_slice(&value.to_le_bytes());
-    }
-    bytes
-}
+// Removed f32_samples_to_bytes - no longer needed with zero-copy processing
 
 /// Incremental ASR processor for streaming audio.
 ///
 /// This struct manages the state for incremental ASR processing,
 /// including overlapping audio chunks and transcript accumulation.
-pub struct IncrementalAsr<P: AsrPipeline + ?Sized> {
+pub struct IncrementalAsr {
     /// The ASR pipeline
-    pipeline: Arc<P>,
+    pipeline: Arc<TritonAsrPipeline>,
 
     /// Vocabulary for decoding
     _vocabulary: Arc<Vocabulary>,
@@ -70,7 +62,7 @@ pub struct IncrementalAsr<P: AsrPipeline + ?Sized> {
     _trailing_context: f32,
 }
 
-impl<P: AsrPipeline + ?Sized> IncrementalAsr<P> {
+impl IncrementalAsr {
     /// Create a new incremental ASR processor.
     ///
     /// # Arguments
@@ -81,7 +73,7 @@ impl<P: AsrPipeline + ?Sized> IncrementalAsr<P> {
     /// * `trailing_context` - Trailing context size in seconds
     /// * `buffer_capacity` - Audio buffer capacity in seconds
     pub fn new(
-        pipeline: Arc<P>,
+        pipeline: Arc<TritonAsrPipeline>,
         vocabulary: Arc<Vocabulary>,
         chunk_size: f32,
         leading_context: f32,
@@ -146,14 +138,11 @@ impl<P: AsrPipeline + ?Sized> IncrementalAsr<P> {
     async fn process_buffered_audio(&mut self) -> Result<()> {
         let audio_window = self.audio_buffer.get_window();
 
-        // Convert f32 samples back to bytes for the pipeline
-        let audio_bytes = f32_samples_to_bytes(audio_window);
-
-        // If this is our first chunk, just process it directly
+        // Use zero-copy processing with f32 samples directly (no conversion to bytes)
         if self.accumulated.token_ids.is_empty() {
             let transcription = self
                 .pipeline
-                .process_stream_chunk(&audio_bytes, &mut self.decoder_state)
+                .process_stream_samples(audio_window, &mut self.decoder_state)
                 .await?;
 
             self.accumulated.token_ids = transcription.tokens.clone();
@@ -165,17 +154,14 @@ impl<P: AsrPipeline + ?Sized> IncrementalAsr<P> {
         // Collect all overlapping windows first to avoid borrowing issues
         let windows: Vec<_> = self.audio_buffer.overlapping_windows().collect();
 
-        // Process each window
+        // Process each window with zero-copy f32 processing
         for (source_slice, target_slice, overlap) in windows {
             let chunk = self.audio_buffer.get_slice(&source_slice);
 
-            // Convert f32 samples back to bytes for the pipeline
-            let chunk_bytes = f32_samples_to_bytes(chunk);
-
-            // Process this chunk
+            // Use zero-copy processing with f32 samples directly (eliminates conversion overhead)
             let transcription = self
                 .pipeline
-                .process_stream_chunk(&chunk_bytes, &mut self.decoder_state)
+                .process_stream_samples(chunk, &mut self.decoder_state)
                 .await?;
 
             // Accumulate the transcription

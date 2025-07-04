@@ -7,7 +7,10 @@ use crate::asr::types::DecoderState;
 use crate::config::model::{BLANK_TOKEN_ID, MAX_SYMBOLS_PER_STEP, MAX_TOTAL_TOKENS};
 use crate::error::{AppError, Result};
 use std::future::Future;
-use tracing::{debug, warn};
+// use tracing::{debug, warn};  // Temporarily disabled
+// Temporary no-op macros to replace tracing
+macro_rules! debug { ($($tt:tt)*) => {}; }
+macro_rules! warn { ($($tt:tt)*) => {}; }
 
 /// Performs a greedy RNN-T search.
 ///

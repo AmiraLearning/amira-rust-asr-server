@@ -10,7 +10,10 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Semaphore;
-use tracing::{debug, info, warn};
+// use tracing::{debug, info, warn};  // Temporarily disabled
+macro_rules! debug { ($($tt:tt)*) => {}; }
+macro_rules! info { ($($tt:tt)*) => {}; }
+macro_rules! warn { ($($tt:tt)*) => {}; }
 
 /// Configuration for the connection pool.
 #[derive(Debug, Clone)]
@@ -146,12 +149,18 @@ impl ConnectionPoolInner {
             // Remove connections that are too old or have been idle too long
             let is_too_old = conn.created_at.elapsed() > Duration::from_secs(3600); // 1 hour max age
             let is_idle_too_long = conn.last_used.elapsed() > self.config.max_idle_time;
-            
+
             if is_too_old {
-                debug!("Removing connection due to age: {:?}", conn.created_at.elapsed());
+                debug!(
+                    "Removing connection due to age: {:?}",
+                    conn.created_at.elapsed()
+                );
                 false
             } else if is_idle_too_long {
-                debug!("Removing connection due to idle time: {:?}", conn.last_used.elapsed());
+                debug!(
+                    "Removing connection due to idle time: {:?}",
+                    conn.last_used.elapsed()
+                );
                 false
             } else {
                 true
@@ -170,7 +179,7 @@ impl ConnectionPoolInner {
     }
 
     /// Check if a connection is still healthy and usable.
-    /// 
+    ///
     /// This method performs basic health checks on a connection to determine
     /// if it should be reused or discarded.
     fn is_connection_healthy(&self, conn: &RawConnection) -> bool {
@@ -187,7 +196,7 @@ impl ConnectionPoolInner {
         // TODO: Could add actual gRPC channel health check here in the future
         // For now, we rely on age and idle time checks which are sufficient
         // for most use cases and avoid the overhead of network calls.
-        
+
         true
     }
 }
@@ -212,7 +221,9 @@ impl ConnectionPool {
         let inner = Arc::new_cyclic(|weak_ref| ConnectionPoolInner {
             endpoint: endpoint.clone(),
             config: config.clone(),
-            connections: Mutex::new(VecDeque::<RawConnection>::with_capacity(config.max_connections)),
+            connections: Mutex::new(VecDeque::<RawConnection>::with_capacity(
+                config.max_connections,
+            )),
             semaphore,
             active_connections: parking_lot::Mutex::new(0),
             self_ref: weak_ref.clone(),
@@ -301,7 +312,7 @@ impl ConnectionPool {
                         last_used: conn.last_used,
                     };
                     connections.push(raw_conn);
-                },
+                }
                 Err(e) => {
                     warn!("Failed to create connection during prewarm: {}", e);
                     break;
