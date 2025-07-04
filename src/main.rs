@@ -26,7 +26,7 @@ async fn main() -> Result<()> {
         .init();
 
     // Load configuration
-    let config = Config::from_env();
+    let config = Config::from_env()?;
 
     // Create Triton connection pool
     info!(
@@ -40,7 +40,7 @@ async fn main() -> Result<()> {
     };
     let triton_pool = ConnectionPool::new(config.triton_endpoint.clone(), pool_config)
         .await
-        .map_err(|e| AppError::from(e))?;
+        .map_err(AppError::from)?;
 
     // Load vocabulary
     info!("Loading vocabulary from {:?}", config.vocabulary_path);

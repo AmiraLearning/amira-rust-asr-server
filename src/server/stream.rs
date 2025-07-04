@@ -70,6 +70,12 @@ pub struct StreamProcessor {
 
     /// Whether the stream is paused
     is_paused: bool,
+
+    /// Rate limiting: track message count in current window
+    message_count: u32,
+
+    /// Rate limiting: start time of current window  
+    window_start: Instant,
 }
 
 impl StreamProcessor {
@@ -107,6 +113,8 @@ impl StreamProcessor {
             incremental_asr,
             last_transcription: String::new(),
             is_paused: false,
+            message_count: 0,
+            window_start: Instant::now(),
         }
     }
 
@@ -160,7 +168,17 @@ impl StreamProcessor {
                             metadata: None,
                             opaque: None,
                         };
-                        let _ = self.ws.send(Message::Text(serde_json::to_string(&response).unwrap())).await;
+                        match serde_json::to_string(&response) {
+                            Ok(json) => {
+                                let _ = self.ws.send(Message::Text(json)).await;
+                            }
+                            Err(e) => {
+                                error!("Failed to serialize response: {}", e);
+                                let _ = self.ws.send(Message::Text(
+                                    r#"{"status":"ERROR","message":"Serialization error"}"#.to_string()
+                                )).await;
+                            }
+                        }
                     }
                 }
 
@@ -188,6 +206,19 @@ impl StreamProcessor {
     async fn handle_audio_chunk(&mut self, data: Vec<u8>) -> Result<()> {
         self.is_paused = false;
 
+        // Validate message size to prevent DoS attacks
+        const MAX_CHUNK_SIZE: usize = 1024 * 1024; // 1MB per chunk
+        if data.len() > MAX_CHUNK_SIZE {
+            return Err(AppError::Validation(format!(
+                "Audio chunk too large: {} bytes (max: {} bytes)",
+                data.len(),
+                MAX_CHUNK_SIZE
+            )));
+        }
+
+        // Rate limiting: check message frequency
+        self.check_rate_limit()?;
+
         // Handle control bytes
         if data.len() == 1 {
             match data[0] {
@@ -204,6 +235,18 @@ impl StreamProcessor {
                 }
                 _ => return Err(AppError::Validation("Unknown control byte".to_string())),
             }
+        }
+
+        // Validate audio data format (must be even for 16-bit PCM)
+        if data.len() % 2 != 0 {
+            return Err(AppError::Validation(
+                "Audio data length must be even for 16-bit PCM".to_string(),
+            ));
+        }
+
+        // Check if data is empty (but not a control byte)
+        if data.is_empty() {
+            return Err(AppError::Validation("Empty audio chunk received".to_string()));
         }
 
         // Buffer audio data
@@ -321,6 +364,49 @@ impl StreamProcessor {
             .send(Message::Text(json))
             .await
             .map_err(|e| AppError::Internal(format!("WebSocket send error: {}", e)))?;
+        Ok(())
+    }
+
+    /// Check rate limiting for incoming messages.
+    /// 
+    /// Implements a simple sliding window rate limiter to prevent abuse.
+    /// Allows up to 100 messages per second for real-time audio streaming.
+    fn check_rate_limit(&mut self) -> Result<()> {
+        const MAX_MESSAGES_PER_WINDOW: u32 = 100;
+        const WINDOW_DURATION_SECS: u64 = 1;
+
+        let now = Instant::now();
+        let window_duration = Duration::from_secs(WINDOW_DURATION_SECS);
+
+        // Check if we need to reset the window
+        if now.duration_since(self.window_start) >= window_duration {
+            self.message_count = 0;
+            self.window_start = now;
+        }
+
+        // Increment message count
+        self.message_count += 1;
+
+        // Check if rate limit exceeded
+        if self.message_count > MAX_MESSAGES_PER_WINDOW {
+            warn!(
+                "Rate limit exceeded for stream {}: {} messages in current window",
+                self.stream_id, self.message_count
+            );
+            return Err(AppError::Validation(format!(
+                "Rate limit exceeded: max {} messages per second allowed",
+                MAX_MESSAGES_PER_WINDOW
+            )));
+        }
+
+        // Log warning when approaching limit
+        if self.message_count > MAX_MESSAGES_PER_WINDOW * 8 / 10 {
+            debug!(
+                "Stream {} approaching rate limit: {}/{} messages",
+                self.stream_id, self.message_count, MAX_MESSAGES_PER_WINDOW
+            );
+        }
+
         Ok(())
     }
 }

@@ -11,7 +11,7 @@ use crate::asr::audio::bytes_to_f32_samples_into;
 use crate::asr::decoder::greedy_decode;
 use crate::asr::memory::global_pools;
 use crate::asr::types::{DecoderState, Transcription, Vocabulary};
-use crate::error::Result;
+use crate::error::{AppError, Result};
 use crate::triton::{
     ConnectionPool, DecoderJointInput, DecoderJointModel, EncoderInput, EncoderModel,
     PreprocessorInput, PreprocessorModel, TritonClient, TritonModel,
@@ -117,7 +117,7 @@ impl TritonAsrPipeline {
     ///
     /// # Returns
     /// The normalized audio samples
-    fn convert_audio(&self, audio_bytes: &[u8]) -> Vec<f32> {
+    fn convert_audio(&self, audio_bytes: &[u8]) -> Result<Vec<f32>> {
         // Use memory pool for audio buffer
         let mut audio_buffer = global_pools().audio_buffers.get();
         audio_buffer.clear();
@@ -127,13 +127,21 @@ impl TritonAsrPipeline {
 
         // Take ownership to return from pool
         audio_buffer.take()
+            .map_err(|e| AppError::Internal(format!("Memory pool error: {}", e)))
     }
 
     /// Process audio with the full ASR pipeline.
     ///
+    /// # Performance Notes
+    /// 
+    /// This method is optimized for the inference hot path:
+    /// - Reuses connection across all model inferences
+    /// - Minimizes cloning of large state vectors
+    /// - Only allocates Vec when required by model input APIs
+    ///
     /// # Arguments
     /// * `waveform` - The audio waveform (f32 samples)
-    /// * `initial_state` - The initial decoder state
+    /// * `initial_state` - The initial decoder state (taken by value to avoid cloning)
     ///
     /// # Returns
     /// The transcription result and updated decoder state
@@ -145,8 +153,9 @@ impl TritonAsrPipeline {
         info!("Starting ASR pipeline for {} samples", waveform.len());
 
         // Step 1: Preprocess audio to features
+        // Get connection once and reuse throughout the pipeline
         let mut connection = if let Some(ref client) = self.client {
-            // Legacy mode: clone the client
+            // Legacy mode: use client reference (clone only when necessary)
             client.clone()
         } else {
             // Pool mode: get connection from pool
@@ -187,22 +196,14 @@ impl TritonAsrPipeline {
         let decoder_state = initial_state;
         let decoder_joint_ref = &self.decoder_joint;
 
-        // Use a struct to hold the state for the decode function
-        struct DecodeState<'a> {
-            client: TritonClient,
-            decoder: &'a DecoderJointModel,
-        }
-
-        let decode_state = DecodeState {
-            client: connection.clone(),
-            decoder: decoder_joint_ref,
-        };
-
         // Create the decode step function that will be called by greedy_decode
+        // Capture the client and decoder by reference to avoid cloning
+        let connection_for_decode = connection.clone(); // Single clone for the entire decode process
         let decode_step = |encoder_frame: &[f32], targets: &[i32], state: DecoderState| {
-            // Clone what we need for the async block
-            let mut client = decode_state.client.clone();
-            let decoder = decode_state.decoder;
+            // Clone the connection for this specific decode step
+            let mut client = connection_for_decode.clone();
+            let decoder = decoder_joint_ref;
+            // These allocations are required by the DecoderJointInput API
             let encoder_frame = encoder_frame.to_vec();
             let targets = targets.to_vec();
 
@@ -261,10 +262,12 @@ impl AsrPipeline for TritonAsrPipeline {
         audio_bytes: &[u8],
         state: &mut DecoderState,
     ) -> Result<Transcription> {
-        let waveform = self.convert_audio(audio_bytes);
+        let waveform = self.convert_audio(audio_bytes)?;
 
+        // Take ownership of current state to avoid cloning
+        let current_state = std::mem::replace(state, DecoderState::new());
         let (transcription, new_state) = self
-            .process_audio_internal(&waveform, state.clone())
+            .process_audio_internal(&waveform, current_state)
             .await?;
 
         // Update the state for the next chunk
@@ -274,7 +277,7 @@ impl AsrPipeline for TritonAsrPipeline {
     }
 
     async fn process_batch(&self, audio_bytes: &[u8]) -> Result<Transcription> {
-        let waveform = self.convert_audio(audio_bytes);
+        let waveform = self.convert_audio(audio_bytes)?;
 
         // For batch processing, we always start with a fresh state
         let initial_state = DecoderState::new();

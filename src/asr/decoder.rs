@@ -187,7 +187,7 @@ fn extract_last_token_logits(logits: &[f32]) -> Result<(&[f32], usize)> {
 
     if logits.len() == VOCABULARY_SIZE {
         // Model returned logits for just the next position (ideal case)
-        return Ok((&logits[..], VOCABULARY_SIZE));
+        return Ok((logits, VOCABULARY_SIZE));
     }
 
     // Model returned logits for all target positions

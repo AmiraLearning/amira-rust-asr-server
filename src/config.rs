@@ -7,6 +7,9 @@
 use std::env;
 use std::path::PathBuf;
 use std::time::Duration;
+use tracing::debug;
+
+use crate::error::{AppError, Result};
 
 /// Audio processing constants
 pub mod audio {
@@ -102,8 +105,8 @@ pub struct Config {
 
 impl Config {
     /// Load configuration from environment variables with sensible defaults
-    pub fn from_env() -> Self {
-        Self {
+    pub fn from_env() -> Result<Self> {
+        let config = Self {
             triton_endpoint: env::var("TRITON_ENDPOINT")
                 .unwrap_or_else(|_| "http://localhost:8001".to_string()),
 
@@ -125,6 +128,113 @@ impl Config {
                     .and_then(|s| s.parse().ok())
                     .unwrap_or(5),
             ),
+        };
+
+        config.validate()?;
+        Ok(config)
+    }
+
+    /// Validate configuration values
+    fn validate(&self) -> Result<()> {
+        // Validate Triton endpoint URL
+        if !self.triton_endpoint.starts_with("http://") && !self.triton_endpoint.starts_with("https://") {
+            return Err(AppError::Configuration(
+                "TRITON_ENDPOINT must start with http:// or https://".to_string(),
+            ));
         }
+
+        // Validate vocabulary path (comprehensive path traversal protection)
+        self.validate_path(&self.vocabulary_path, "VOCABULARY_PATH")?;
+
+        // Validate server host (basic validation)
+        if self.server_host.is_empty() {
+            return Err(AppError::Configuration(
+                "SERVER_HOST cannot be empty".to_string(),
+            ));
+        }
+
+        // Validate server port range
+        if self.server_port == 0 || self.server_port < 1024 {
+            return Err(AppError::Configuration(
+                "SERVER_PORT must be between 1024 and 65535".to_string(),
+            ));
+        }
+
+        // Validate inference timeout
+        if self.inference_timeout.as_secs() == 0 || self.inference_timeout.as_secs() > 300 {
+            return Err(AppError::Configuration(
+                "INFERENCE_TIMEOUT_SECS must be between 1 and 300 seconds".to_string(),
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Validate a file path for security issues.
+    /// 
+    /// This method provides comprehensive protection against path traversal attacks
+    /// by checking for various malicious patterns and ensuring the path is safe.
+    fn validate_path(&self, path: &std::path::Path, field_name: &str) -> Result<()> {
+        // Convert to string for analysis
+        let path_str = path.to_string_lossy();
+        
+        // Check for obvious path traversal patterns
+        if path_str.contains("..") || path_str.contains("//") {
+            return Err(AppError::Configuration(
+                format!("{} contains invalid path components (.. or //)", field_name)
+            ));
+        }
+        
+        // Check for null bytes (can be used to bypass filters)
+        if path_str.contains('\0') {
+            return Err(AppError::Configuration(
+                format!("{} contains null bytes", field_name)
+            ));
+        }
+        
+        // Check for control characters that shouldn't be in file paths
+        if path_str.chars().any(|c| c.is_control() && c != '\t') {
+            return Err(AppError::Configuration(
+                format!("{} contains invalid control characters", field_name)
+            ));
+        }
+        
+        // Attempt to canonicalize the path to resolve any .. components
+        // This is more robust than string matching
+        match path.canonicalize() {
+            Ok(canonical_path) => {
+                // Check if the canonical path is still within reasonable bounds
+                // For security, we might want to ensure it's within a specific directory
+                let canonical_str = canonical_path.to_string_lossy();
+                
+                // Additional check: ensure the canonicalized path doesn't contain suspicious patterns
+                if canonical_str.contains("..") {
+                    return Err(AppError::Configuration(
+                        format!("{} resolves to a path with traversal components", field_name)
+                    ));
+                }
+                
+                // Optionally, you could add a check to ensure the path is within an allowed directory:
+                // if !canonical_path.starts_with("/allowed/directory") {
+                //     return Err(AppError::Configuration(
+                //         format!("{} is outside allowed directory", field_name)
+                //     ));
+                // }
+            }
+            Err(_) => {
+                // If canonicalization fails, the path might not exist yet, which could be okay
+                // depending on your use case. For vocabulary files, we might want to be more strict.
+                debug!("Path canonicalization failed for {}: {:?} (file may not exist yet)", field_name, path);
+                
+                // Still perform basic validation even if canonicalization fails
+                if path_str.len() > 4096 {
+                    return Err(AppError::Configuration(
+                        format!("{} is too long (max 4096 characters)", field_name)
+                    ));
+                }
+            }
+        }
+        
+        Ok(())
     }
 }

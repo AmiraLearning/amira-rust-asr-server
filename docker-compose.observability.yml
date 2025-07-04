@@ -3,8 +3,6 @@
 # This provides a complete observability environment for the AMIRA ASR server
 # including Prometheus, Grafana, and Jaeger for production monitoring.
 
-version: '3.8'
-
 services:
   # Prometheus for metrics collection
   prometheus:

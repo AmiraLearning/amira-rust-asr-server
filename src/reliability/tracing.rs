@@ -240,7 +240,7 @@ pub mod span_utils {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tracing::{info, info_span};
+    // use tracing::{info, info_span};
 
     #[test]
     fn test_tracing_config_default() {

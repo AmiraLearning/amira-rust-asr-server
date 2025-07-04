@@ -45,6 +45,8 @@ pub struct PooledConnection {
     pool: Arc<ConnectionPoolInner>,
     created_at: Instant,
     last_used: Instant,
+    // Flag to prevent infinite recursion in Drop
+    should_return_to_pool: bool,
 }
 
 impl PooledConnection {
@@ -67,30 +69,38 @@ impl PooledConnection {
 
 impl Drop for PooledConnection {
     fn drop(&mut self) {
-        // Return the connection to the pool
-        if self.idle_time() < self.pool.config.max_idle_time {
-            self.pool.return_connection(PooledConnection {
+        // Only return to pool if this is the original connection
+        if self.should_return_to_pool && self.idle_time() < self.pool.config.max_idle_time {
+            // Return the raw connection to the pool
+            let raw_conn = RawConnection {
                 client: self.client.clone(),
-                pool: self.pool.clone(),
                 created_at: self.created_at,
                 last_used: self.last_used,
-            });
+            };
+            self.pool.return_raw_connection(raw_conn);
         }
     }
+}
+
+/// Raw connection with metadata.
+struct RawConnection {
+    client: TritonClient,
+    created_at: Instant,
+    last_used: Instant,
 }
 
 /// Internal connection pool state.
 struct ConnectionPoolInner {
     endpoint: String,
     config: PoolConfig,
-    connections: Mutex<VecDeque<PooledConnection>>,
+    connections: Mutex<VecDeque<RawConnection>>,
     semaphore: Semaphore,
     active_connections: parking_lot::Mutex<usize>,
     self_ref: std::sync::Weak<Self>,
 }
 
 impl ConnectionPoolInner {
-    fn return_connection(&self, conn: PooledConnection) {
+    fn return_raw_connection(&self, conn: RawConnection) {
         let mut connections = self.connections.lock();
         if connections.len() < self.config.max_connections {
             connections.push_back(conn);
@@ -119,10 +129,11 @@ impl ConnectionPoolInner {
             pool: pool_arc,
             created_at: now,
             last_used: now,
+            should_return_to_pool: true,
         })
     }
 
-    fn try_get_connection(&self) -> Option<PooledConnection> {
+    fn try_get_raw_connection(&self) -> Option<RawConnection> {
         let mut connections = self.connections.lock();
         connections.pop_front()
     }
@@ -131,17 +142,53 @@ impl ConnectionPoolInner {
         let mut connections = self.connections.lock();
         let before_cleanup = connections.len();
 
-        connections.retain(|conn| conn.idle_time() < self.config.max_idle_time);
+        connections.retain(|conn| {
+            // Remove connections that are too old or have been idle too long
+            let is_too_old = conn.created_at.elapsed() > Duration::from_secs(3600); // 1 hour max age
+            let is_idle_too_long = conn.last_used.elapsed() > self.config.max_idle_time;
+            
+            if is_too_old {
+                debug!("Removing connection due to age: {:?}", conn.created_at.elapsed());
+                false
+            } else if is_idle_too_long {
+                debug!("Removing connection due to idle time: {:?}", conn.last_used.elapsed());
+                false
+            } else {
+                true
+            }
+        });
 
         let after_cleanup = connections.len();
         if before_cleanup != after_cleanup {
             debug!(
-                "Cleaned up {} idle connections, pool size: {} -> {}",
+                "Cleaned up {} connections (idle/old), pool size: {} -> {}",
                 before_cleanup - after_cleanup,
                 before_cleanup,
                 after_cleanup
             );
         }
+    }
+
+    /// Check if a connection is still healthy and usable.
+    /// 
+    /// This method performs basic health checks on a connection to determine
+    /// if it should be reused or discarded.
+    fn is_connection_healthy(&self, conn: &RawConnection) -> bool {
+        // Check connection age - connections older than 1 hour should be refreshed
+        if conn.created_at.elapsed() > Duration::from_secs(3600) {
+            return false;
+        }
+
+        // Check if connection has been idle too long
+        if conn.last_used.elapsed() > self.config.max_idle_time {
+            return false;
+        }
+
+        // TODO: Could add actual gRPC channel health check here in the future
+        // For now, we rely on age and idle time checks which are sufficient
+        // for most use cases and avoid the overhead of network calls.
+        
+        true
     }
 }
 
@@ -165,7 +212,7 @@ impl ConnectionPool {
         let inner = Arc::new_cyclic(|weak_ref| ConnectionPoolInner {
             endpoint: endpoint.clone(),
             config: config.clone(),
-            connections: Mutex::new(VecDeque::with_capacity(config.max_connections)),
+            connections: Mutex::new(VecDeque::<RawConnection>::with_capacity(config.max_connections)),
             semaphore,
             active_connections: parking_lot::Mutex::new(0),
             self_ref: weak_ref.clone(),
@@ -211,10 +258,22 @@ impl ConnectionPool {
         .map_err(|_| AppError::Internal("Connection pool timeout".to_string()))?
         .map_err(|_| AppError::Internal("Connection pool closed".to_string()))?;
 
-        // Try to get an existing connection
-        if let Some(conn) = self.inner.try_get_connection() {
-            debug!("Reused existing connection from pool");
-            return Ok(conn);
+        // Try to get an existing connection and validate it
+        while let Some(raw_conn) = self.inner.try_get_raw_connection() {
+            // Check if connection is still healthy
+            if self.inner.is_connection_healthy(&raw_conn) {
+                debug!("Reused existing connection from pool");
+                return Ok(PooledConnection {
+                    client: raw_conn.client,
+                    pool: self.inner.clone(),
+                    created_at: raw_conn.created_at,
+                    last_used: Instant::now(), // Update last used time
+                    should_return_to_pool: true,
+                });
+            } else {
+                debug!("Discarded unhealthy connection from pool");
+                // Continue loop to try next connection
+            }
         }
 
         // Create a new connection
@@ -235,7 +294,14 @@ impl ConnectionPool {
 
         for _ in 0..self.inner.config.min_connections {
             match self.inner.create_connection().await {
-                Ok(conn) => connections.push(conn),
+                Ok(conn) => {
+                    let raw_conn = RawConnection {
+                        client: conn.client.clone(),
+                        created_at: conn.created_at,
+                        last_used: conn.last_used,
+                    };
+                    connections.push(raw_conn);
+                },
                 Err(e) => {
                     warn!("Failed to create connection during prewarm: {}", e);
                     break;

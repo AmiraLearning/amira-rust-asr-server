@@ -8,6 +8,7 @@
 pub struct TensorView<'a> {
     data: &'a [f32],
     shape: &'a [usize],
+    #[allow(dead_code)]
     strides: Vec<usize>,
 }
 
@@ -79,6 +80,7 @@ impl<'a> TensorView<'a> {
 }
 
 /// Zero-copy mutable tensor view for in-place operations.
+#[allow(dead_code)]
 pub struct TensorViewMut<'a> {
     data: &'a mut [f32],
     shape: &'a [usize],
@@ -87,6 +89,7 @@ pub struct TensorViewMut<'a> {
 
 impl<'a> TensorViewMut<'a> {
     /// Create a new mutable tensor view.
+    #[allow(dead_code)]
     pub fn new(data: &'a mut [f32], shape: &'a [usize]) -> Self {
         let mut strides = vec![1; shape.len()];
         for i in (0..shape.len().saturating_sub(1)).rev() {
@@ -101,6 +104,7 @@ impl<'a> TensorViewMut<'a> {
     }
 
     /// Fill a tensor slice with values in-place.
+    #[allow(dead_code)]
     pub fn fill_slice(&mut self, start_idx: usize, values: &[f32]) {
         let end_idx = (start_idx + values.len()).min(self.data.len());
         let copy_len = end_idx - start_idx;

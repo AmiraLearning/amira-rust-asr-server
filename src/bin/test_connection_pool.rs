@@ -41,7 +41,9 @@ impl MockTritonServer {
 
 #[derive(Debug, Clone)]
 struct MockConnection {
+    #[allow(dead_code)]
     id: uuid::Uuid,
+    #[allow(dead_code)]
     created_at: Instant,
 }
 

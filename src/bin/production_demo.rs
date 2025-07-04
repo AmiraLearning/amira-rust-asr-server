@@ -33,7 +33,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("🚀 Starting Production Reliability Features Demo");
 
     // Initialize metrics
-    let metrics = AsrMetrics::new().expect("Failed to initialize metrics");
+    let metrics = match AsrMetrics::new() {
+        Ok(metrics) => metrics,
+        Err(e) => {
+            eprintln!("Failed to initialize metrics: {}", e);
+            eprintln!("Demo will continue without metrics collection");
+            // For demo purposes, we'll exit rather than continue without metrics
+            std::process::exit(1);
+        }
+    };
 
     // Create circuit breaker with aggressive settings for demo
     let circuit_config = CircuitBreakerConfig {

@@ -76,7 +76,7 @@ impl TritonClient {
             .client
             .model_infer(request)
             .await
-            .map_err(|e| AppError::TritonInference(e))?;
+            .map_err(AppError::TritonInference)?;
 
         Ok(response.into_inner())
     }

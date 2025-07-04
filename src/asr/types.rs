@@ -85,12 +85,12 @@ impl Vocabulary {
     /// The file format should be: `<token> <id>` on each line.
     /// For example: `▁the 5` or `<blk> 1024`
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let content = fs::read_to_string(path).map_err(|e| AppError::Io(e))?;
+        let content = fs::read_to_string(path).map_err(AppError::Io)?;
 
         let mut id_to_token = HashMap::new();
 
         for line in content.lines() {
-            let parts: Vec<&str> = line.trim().split_whitespace().collect();
+            let parts: Vec<&str> = line.split_whitespace().collect();
             if parts.len() >= 2 {
                 // Token is everything except the last part (which is the ID)
                 let token = parts[0..parts.len() - 1].join(" ");
@@ -163,8 +163,8 @@ impl DecoderState {
     /// Create a new decoder state initialized to zeros.
     pub fn new() -> Self {
         Self {
-            states_1: vec![0.0; 2 * 1 * DECODER_STATE_SIZE],
-            states_2: vec![0.0; 2 * 1 * DECODER_STATE_SIZE],
+            states_1: vec![0.0; 2 * DECODER_STATE_SIZE],
+            states_2: vec![0.0; 2 * DECODER_STATE_SIZE],
         }
     }
 }

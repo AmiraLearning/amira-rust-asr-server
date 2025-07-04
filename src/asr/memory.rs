@@ -65,7 +65,6 @@ impl<T> ObjectPool<T> {
         }
         // If pool is full, just drop the object
     }
-
     /// Get current pool statistics.
     pub fn stats(&self) -> PoolStats {
         let pool = self.pool.lock();
@@ -77,6 +76,32 @@ impl<T> ObjectPool<T> {
 }
 
 /// A pooled object that automatically returns to the pool when dropped.
+/// 
+/// # Safety Contract
+/// 
+/// This object can be accessed via:
+/// - `Deref`/`DerefMut` traits: Convenient but may panic if object was taken
+/// - `get()`/`get_mut()` methods: Safe, returns `Result` 
+/// - `take()` method: Consumes the object, preventing further access
+/// 
+/// Once `take()` is called, any subsequent access via Deref traits will panic.
+/// This is by design to prevent use-after-take bugs.
+/// 
+/// # Example
+/// 
+/// ```rust
+/// let mut pooled = pool.get();
+/// pooled.push(42);  // Works via Deref
+/// 
+/// // Safe access
+/// if let Ok(obj) = pooled.get() {
+///     println!("Length: {}", obj.len());
+/// }
+/// 
+/// // Take ownership (object can't be accessed after this)
+/// let owned = pooled.take().unwrap();
+/// // pooled.len(); // Would panic!
+/// ```
 pub struct PooledObject<'a, T> {
     obj: Option<T>,
     pool: &'a ObjectPool<T>,
@@ -84,18 +109,18 @@ pub struct PooledObject<'a, T> {
 
 impl<'a, T> PooledObject<'a, T> {
     /// Get a mutable reference to the contained object.
-    pub fn get_mut(&mut self) -> &mut T {
-        self.obj.as_mut().expect("Object already taken")
+    pub fn get_mut(&mut self) -> Result<&mut T, &'static str> {
+        self.obj.as_mut().ok_or("Object already taken")
     }
 
     /// Get an immutable reference to the contained object.
-    pub fn get(&self) -> &T {
-        self.obj.as_ref().expect("Object already taken")
+    pub fn get(&self) -> Result<&T, &'static str> {
+        self.obj.as_ref().ok_or("Object already taken")
     }
 
     /// Take ownership of the object (won't return to pool).
-    pub fn take(mut self) -> T {
-        self.obj.take().expect("Object already taken")
+    pub fn take(mut self) -> Result<T, &'static str> {
+        self.obj.take().ok_or("Object already taken")
     }
 }
 
@@ -110,14 +135,54 @@ impl<'a, T> Drop for PooledObject<'a, T> {
 impl<'a, T> std::ops::Deref for PooledObject<'a, T> {
     type Target = T;
 
+    /// Dereference the pooled object.
+    /// 
+    /// # Panics
+    /// 
+    /// Panics if the object has already been taken via `take()`. This indicates
+    /// a programming error - the object should not be accessed after taking.
+    /// Use `get()` method for non-panicking access.
     fn deref(&self) -> &Self::Target {
-        self.get()
+        match self.obj.as_ref() {
+            Some(obj) => obj,
+            None => {
+                // In debug builds, provide detailed error information
+                debug_assert!(false, "Attempted to dereference a taken PooledObject. This is a programming error.");
+                
+                // Log the error for debugging
+                tracing::error!("Attempted to dereference taken PooledObject - this indicates a bug in object lifecycle management");
+                
+                // Unfortunately, Deref trait requires returning a reference, not Result
+                // This panic is the only safe option to prevent undefined behavior
+                panic!("PooledObject already taken - use get() method for safe access or fix object lifecycle")
+            }
+        }
     }
 }
 
 impl<'a, T> std::ops::DerefMut for PooledObject<'a, T> {
+    /// Mutably dereference the pooled object.
+    /// 
+    /// # Panics
+    /// 
+    /// Panics if the object has already been taken via `take()`. This indicates
+    /// a programming error - the object should not be accessed after taking.
+    /// Use `get_mut()` method for non-panicking access.
     fn deref_mut(&mut self) -> &mut Self::Target {
-        self.get_mut()
+        match self.obj.as_mut() {
+            Some(obj) => obj,
+            None => {
+                // In debug builds, provide detailed error information
+                debug_assert!(false, "Attempted to mutably dereference a taken PooledObject. This is a programming error.");
+                
+                // Log the error for debugging
+                tracing::error!("Attempted to mutably dereference taken PooledObject - this indicates a bug in object lifecycle management");
+                
+                // Unfortunately, DerefMut trait requires returning a reference, not Result
+                // This panic is the only safe option to prevent undefined behavior
+                panic!("PooledObject already taken - use get_mut() method for safe access or fix object lifecycle")
+            }
+        }
     }
 }
 
@@ -258,22 +323,29 @@ mod tests {
 
     #[test]
     fn test_object_pool() {
-        let pool = ObjectPool::new(|| Vec::<i32>::new(), 5, 2);
+        let pool = ObjectPool::new(|| Vec::<i32>::new(), 5, 0); // Start with empty pool
 
-        // Get an object
+        // Get an object 
         let mut obj1 = pool.get();
+        assert_eq!(obj1.len(), 0);
         obj1.push(42);
         assert_eq!(obj1.len(), 1);
 
         // Return it (via drop)
         drop(obj1);
 
-        // Get it again - should be reused
+        // Should now have 1 object in pool
+        let stats = pool.stats();
+        assert_eq!(stats.available, 1);
+
+        // Get it again - should be the same object with the value intact
         let obj2 = pool.get();
         assert_eq!(obj2.len(), 1); // Should still have the 42
+        assert_eq!(obj2[0], 42);
 
         let stats = pool.stats();
         assert_eq!(stats.max_size, 5);
+        assert_eq!(stats.available, 0); // Should be taken from pool
     }
 
     #[test]

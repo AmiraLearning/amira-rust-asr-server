@@ -32,6 +32,10 @@ pub enum AppError {
     #[error("Invalid request: {0}")]
     Validation(String),
 
+    /// Errors from invalid configuration.
+    #[error("Configuration error: {0}")]
+    Configuration(String),
+
     /// Errors from the underlying IO system.
     #[error("IO error: {0}")]
     Io(#[from] io::Error),

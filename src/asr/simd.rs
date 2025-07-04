@@ -6,6 +6,8 @@
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 
+use crate::error::{AppError, Result};
+
 /// Fast and simple SIMD-optimized audio conversion.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
@@ -65,27 +67,21 @@ unsafe fn bytes_to_f32_avx2_complex(input: &[u8], output: &mut Vec<f32>) {
         let i16_lo = _mm256_extracti128_si256(bytes, 0);
         let i16_hi = _mm256_extracti128_si256(bytes, 1);
 
-        // Convert to i32 (needed for precise conversion)
-        let i32_lo_lo = _mm256_cvtepi16_epi32(i16_lo);
-        let i32_lo_hi = _mm256_cvtepi16_epi32(_mm_shuffle_epi32(i16_lo, 0x4E));
-        let i32_hi_lo = _mm256_cvtepi16_epi32(i16_hi);
-        let i32_hi_hi = _mm256_cvtepi16_epi32(_mm_shuffle_epi32(i16_hi, 0x4E));
+        // Convert i16 to i32, then to f32 and normalize
+        // i16_lo contains elements 0-7, i16_hi contains elements 8-15
+        let i32_lo = _mm256_cvtepi16_epi32(i16_lo);  // Convert elements 0-7
+        let i32_hi = _mm256_cvtepi16_epi32(i16_hi);  // Convert elements 8-15
 
-        // Convert to f32 and normalize
-        let f32_0 = _mm256_mul_ps(_mm256_cvtepi32_ps(i32_lo_lo), scale);
-        let f32_1 = _mm256_mul_ps(_mm256_cvtepi32_ps(i32_lo_hi), scale);
-        let f32_2 = _mm256_mul_ps(_mm256_cvtepi32_ps(i32_hi_lo), scale);
-        let f32_3 = _mm256_mul_ps(_mm256_cvtepi32_ps(i32_hi_hi), scale);
+        let f32_lo = _mm256_mul_ps(_mm256_cvtepi32_ps(i32_lo), scale);  // Elements 0-7
+        let f32_hi = _mm256_mul_ps(_mm256_cvtepi32_ps(i32_hi), scale);  // Elements 8-15
 
-        // Extend output vector - safe method
+        // Extend output vector - safe method (16 i16 -> 16 f32)
         let old_len = output.len();
         output.resize(old_len + 16, 0.0);
 
-        // Store results
-        _mm256_storeu_ps(output.as_mut_ptr().add(old_len), f32_0);
-        _mm256_storeu_ps(output.as_mut_ptr().add(old_len + 8), f32_1);
-        _mm256_storeu_ps(output.as_mut_ptr().add(old_len + 8), f32_2);
-        _mm256_storeu_ps(output.as_mut_ptr().add(old_len + 12), f32_3);
+        // Store results (each vector contains 8 f32 values)
+        _mm256_storeu_ps(output.as_mut_ptr().add(old_len), f32_lo);      // 0-7
+        _mm256_storeu_ps(output.as_mut_ptr().add(old_len + 8), f32_hi);  // 8-15
     }
 
     // Handle remainder with scalar code
@@ -243,9 +239,13 @@ unsafe fn smooth_audio_avx2(input: &[f32], output: &mut [f32], window_size: usiz
 }
 
 /// Public interface for optimized audio smoothing.
-pub fn smooth_audio_optimized(input: &[f32], output: &mut [f32], window_size: usize) {
+pub fn smooth_audio_optimized(input: &[f32], output: &mut [f32], window_size: usize) -> Result<()> {
     if input.len() != output.len() {
-        panic!("Input and output slices must have the same length");
+        return Err(AppError::Audio(format!(
+            "Input and output slices must have the same length: {} != {}",
+            input.len(),
+            output.len()
+        )));
     }
 
     #[cfg(target_arch = "x86_64")]
@@ -261,6 +261,8 @@ pub fn smooth_audio_optimized(input: &[f32], output: &mut [f32], window_size: us
     {
         smooth_audio_scalar(input, output, window_size)
     }
+
+    Ok(())
 }
 
 /// Scalar fallback for audio smoothing.
@@ -271,11 +273,7 @@ fn smooth_audio_scalar(input: &[f32], output: &mut [f32], window_size: usize) {
     }
 
     for i in 0..input.len() {
-        let start = if i >= window_size / 2 {
-            i - window_size / 2
-        } else {
-            0
-        };
+        let start = i.saturating_sub(window_size / 2);
         let end = std::cmp::min(start + window_size, input.len());
         let window = &input[start..end];
         output[i] = window.iter().sum::<f32>() / window.len() as f32;
@@ -329,8 +327,25 @@ unsafe fn transpose_encoder_output_avx512(
                     );
 
                     if f + 16 <= f_end {
-                        let values = _mm512_i32gather_ps(gather_indices, src_ptr, 4);
-                        _mm512_storeu_ps(dst_ptr, values);
+                        // Additional safety check: ensure we won't read beyond input bounds
+                        let max_src_idx = (f + 15) * time_steps + t;
+                        let max_dst_idx = t * features + f + 15;
+                        
+                        if max_src_idx < input.len() && max_dst_idx < output.len() {
+                            let values = _mm512_i32gather_ps(gather_indices, src_ptr, 4);
+                            _mm512_storeu_ps(dst_ptr, values);
+                        } else {
+                            // Fall back to safe element-wise copy if bounds check fails
+                            for offset in 0..16 {
+                                if f + offset < f_end {
+                                    let src_idx = (f + offset) * time_steps + t;
+                                    let dst_idx = t * features + f + offset;
+                                    if src_idx < input.len() && dst_idx < output.len() {
+                                        output[dst_idx] = input[src_idx];
+                                    }
+                                }
+                            }
+                        }
                     } else {
                         // Handle remainder elements with bounds checking
                         for offset in 0..(f_end - f) {
@@ -446,12 +461,29 @@ unsafe fn gemm_tile_16x16x16(
     // Load initial C values
     for i in 0..tile_m.min(16) {
         if tile_n >= 16 {
-            c_regs[i] = _mm512_loadu_ps(c.as_ptr().add(i * ldc));
+            // Bounds check before SIMD load
+            let load_idx = i * ldc;
+            if load_idx + 16 <= c.len() {
+                c_regs[i] = _mm512_loadu_ps(c.as_ptr().add(load_idx));
+            } else {
+                // Fall back to safe element-wise loading
+                let mut temp = [0.0f32; 16];
+                for j in 0..16.min(tile_n) {
+                    let idx = i * ldc + j;
+                    if idx < c.len() {
+                        temp[j] = c[idx];
+                    }
+                }
+                c_regs[i] = _mm512_loadu_ps(temp.as_ptr());
+            }
         } else {
             // Handle partial loads for edge cases
             let mut temp = [0.0f32; 16];
             for j in 0..tile_n {
-                temp[j] = c[i * ldc + j];
+                let idx = i * ldc + j;
+                if idx < c.len() {
+                    temp[j] = c[idx];
+                }
             }
             c_regs[i] = _mm512_loadu_ps(temp.as_ptr());
         }
@@ -702,7 +734,7 @@ mod tests {
         let mut simd_result = vec![0.0; test_data.len()];
 
         smooth_audio_scalar(&test_data, &mut scalar_result, 5);
-        smooth_audio_optimized(&test_data, &mut simd_result, 5);
+        smooth_audio_optimized(&test_data, &mut simd_result, 5).unwrap();
 
         for (i, (&scalar, &simd)) in scalar_result.iter().zip(simd_result.iter()).enumerate() {
             assert!(

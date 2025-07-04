@@ -41,17 +41,26 @@ impl GracefulShutdown {
 
         tokio::spawn(async move {
             let ctrl_c = async {
-                signal::ctrl_c()
-                    .await
-                    .expect("Failed to install Ctrl+C handler");
+                if let Err(e) = signal::ctrl_c().await {
+                    error!("Failed to install Ctrl+C handler: {}", e);
+                    // If we can't install Ctrl+C handler, we'll rely on SIGTERM only
+                    return;
+                }
             };
 
             #[cfg(unix)]
             let terminate = async {
-                signal::unix::signal(signal::unix::SignalKind::terminate())
-                    .expect("Failed to install signal handler")
-                    .recv()
-                    .await;
+                match signal::unix::signal(signal::unix::SignalKind::terminate()) {
+                    Ok(mut stream) => {
+                        stream.recv().await;
+                    }
+                    Err(e) => {
+                        error!("Failed to install SIGTERM handler: {}", e);
+                        // If we can't install signal handlers, we'll wait indefinitely
+                        // This is not ideal but prevents panic
+                        std::future::pending::<()>().await;
+                    }
+                }
             };
 
             #[cfg(not(unix))]
