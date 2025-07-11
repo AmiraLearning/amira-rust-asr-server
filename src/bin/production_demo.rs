@@ -1,84 +1,26 @@
 //! Production Reliability Features Demo
 //!
-//! This binary demonstrates all the production reliability and observability
-//! features implemented according to GEMINI_ROADMAP.md Phase 3.
+//! This binary demonstrates the production reliability features:
+//! - Circuit breaker pattern for fault tolerance
+//! - Graceful shutdown handling
+//! - Basic health checks and monitoring
 
 use amira_rust_asr_server::reliability::{
     circuit_breaker::{CircuitBreaker, CircuitBreakerConfig},
     graceful_shutdown::GracefulShutdown,
-    // metrics::AsrMetrics,  // Temporarily disabled - requires external metrics crates
-    // tracing_config::{init_tracing, TracingConfig},  // Temporarily disabled - requires external tracing crates
 };
 
-// Temporary mock for metrics until external deps are restored
-struct MockAsrMetrics;
-
-impl MockAsrMetrics {
-    fn new() -> Result<Self, String> {
-        Ok(Self)
-    }
-
-    fn router(&self) -> Router {
-        Router::new()
-    }
-}
-
-struct MockTracingConfig {
-    service_name: String,
-    jaeger_endpoint: Option<String>,
-    enable_console: bool,
-    log_level: String,
-}
-
-fn mock_init_tracing(_config: MockTracingConfig) -> Result<(), String> {
-    Ok(())
-}
-
-// Type aliases for the temporarily mocked parts
-type AsrMetrics = MockAsrMetrics;
-type TracingConfig = MockTracingConfig;
-fn init_tracing(config: TracingConfig) -> Result<(), String> {
-    mock_init_tracing(config)
-}
 use axum::{extract::State, http::StatusCode, response::Json, routing::get, Router};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
-// Temporarily disabled tracing while resolving dependencies
-// use tracing::{error, info, warn};
 
-// Temporary macro replacements
-macro_rules! error { ($($tt:tt)*) => { println!("ERROR: {}", format_args!($($tt)*)); }; }
-macro_rules! info { ($($tt:tt)*) => { println!("INFO: {}", format_args!($($tt)*)); }; }
-macro_rules! warn { ($($tt:tt)*) => { println!("WARN: {}", format_args!($($tt)*)); }; }
+use tracing::{error, info, warn};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize distributed tracing
-    let tracing_config = TracingConfig {
-        service_name: "amira-asr-production-demo".to_string(),
-        jaeger_endpoint: None, // Disable Jaeger for demo
-        enable_console: true,
-        log_level: "info".to_string(),
-    };
-
-    if let Err(e) = init_tracing(tracing_config) {
-        eprintln!("Failed to initialize tracing: {}", e);
-    }
-
     info!("🚀 Starting Production Reliability Features Demo");
-
-    // Initialize metrics
-    let metrics = match AsrMetrics::new() {
-        Ok(metrics) => metrics,
-        Err(e) => {
-            eprintln!("Failed to initialize metrics: {}", e);
-            eprintln!("Demo will continue without metrics collection");
-            // For demo purposes, we'll exit rather than continue without metrics
-            std::process::exit(1);
-        }
-    };
 
     // Create circuit breaker with aggressive settings for demo
     let circuit_config = CircuitBreakerConfig {
@@ -92,12 +34,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize graceful shutdown
     let shutdown_handler = GracefulShutdown::new();
-
-    // Start listening for shutdown signals
     shutdown_handler.wait_for_signal().await;
-
-    // Create metrics router separately
-    let metrics_router = metrics.router();
 
     // Create demo routes
     let app = Router::new()
@@ -107,11 +44,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/demo/circuit-status", get(circuit_status))
         .with_state(AppState {
             circuit_breaker: Arc::clone(&circuit_breaker),
-        })
-        .merge(metrics_router);
+        });
 
     info!("🌐 Starting demo server on http://localhost:3000");
-    info!("📊 Metrics available at http://localhost:3000/metrics");
     info!("🔧 Demo endpoints:");
     info!("   GET /health - Health check");
     info!("   GET /demo/success - Always succeeds");
@@ -149,23 +84,17 @@ struct AppState {
 }
 
 async fn health_check() -> Json<Value> {
-    // Temporarily disabled: amira_rust_asr_server::reliability::metrics::record_request_start("health");
-
     Json(json!({
         "status": "healthy",
         "service": "amira-asr-production-demo",
         "features": [
             "circuit_breaker",
-            "graceful_shutdown",
-            "prometheus_metrics",
-            "distributed_tracing"
+            "graceful_shutdown"
         ]
     }))
 }
 
 async fn demo_success(State(state): State<AppState>) -> Json<Value> {
-    // Temporarily disabled: amira_rust_asr_server::reliability::metrics::record_request_start("demo_success");
-
     // Simulate successful operation through circuit breaker
     let result = state
         .circuit_breaker
@@ -190,8 +119,6 @@ async fn demo_success(State(state): State<AppState>) -> Json<Value> {
 }
 
 async fn demo_failure(State(state): State<AppState>) -> (StatusCode, Json<Value>) {
-    // Temporarily disabled: amira_rust_asr_server::reliability::metrics::record_request_start("demo_failure");
-
     // Simulate failing operation through circuit breaker
     let result = state
         .circuit_breaker
@@ -207,10 +134,6 @@ async fn demo_failure(State(state): State<AppState>) -> (StatusCode, Json<Value>
     let response = match result {
         Ok(_) => unreachable!(),
         Err(e) => {
-            // Temporarily disabled: amira_rust_asr_server::reliability::metrics::record_request_failure(
-            //     "demo_failure",
-            //     "simulated",
-            // );
             json!({
                 "status": "error",
                 "error": e.to_string(),
@@ -306,6 +229,5 @@ async fn demo_scenarios(circuit_breaker: Arc<CircuitBreaker>) {
     }
 
     info!("🎬 Demo scenarios completed!");
-    info!("📊 Check /metrics endpoint for Prometheus metrics");
     info!("🔧 Try the demo endpoints manually for interactive testing");
 }

@@ -7,10 +7,32 @@
 use std::env;
 use std::path::PathBuf;
 use std::time::Duration;
-// use tracing::debug;  // Temporarily disabled
-macro_rules! debug { ($($tt:tt)*) => {}; }
+use serde::{Deserialize, Serialize};
+use figment::{Figment, providers::{Env, Format, Toml, Yaml}};
+use tracing::debug;
 
 use crate::error::{AppError, Result};
+
+/// Serde helper for Duration serialization/deserialization as seconds
+mod duration_secs {
+    use serde::{Deserialize, Deserializer, Serializer};
+    use std::time::Duration;
+
+    pub fn serialize<S>(duration: &Duration, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_u64(duration.as_secs())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Duration, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let secs = u64::deserialize(deserializer)?;
+        Ok(Duration::from_secs(secs))
+    }
+}
 
 /// Audio processing constants
 pub mod audio {
@@ -185,8 +207,28 @@ pub mod timeouts {
     pub const CONNECTION_CLEANUP_INTERVAL: Duration = Duration::from_secs(60);
 }
 
-/// Application configuration loaded from environment variables
-#[derive(Debug, Clone)]
+// Default value functions for serde defaults
+fn default_max_concurrent_streams() -> usize { 10 }
+fn default_max_concurrent_batches() -> usize { 50 }
+fn default_inference_queue_size() -> usize { 100 }
+fn default_audio_buffer_capacity() -> usize { 1024 * 1024 } // 1MB
+fn default_max_batch_audio_length() -> f32 { 30.0 }
+fn default_stream_timeout_secs() -> u64 { 30 }
+fn default_keepalive_check_period_ms() -> u64 { 100 }
+fn default_preprocessor_model_name() -> String { "preprocessor".to_string() }
+fn default_encoder_model_name() -> String { "encoder".to_string() }
+fn default_decoder_joint_model_name() -> String { "decoder_joint".to_string() }
+fn default_max_symbols_per_step() -> usize { 30 }
+fn default_max_total_tokens() -> usize { 200 }
+fn default_enable_platform_optimizations() -> bool { true }
+fn default_disable_numa_in_cloud() -> bool { true }
+fn default_disable_cpu_affinity() -> bool { false }
+fn default_force_io_uring() -> bool { false }
+fn default_inference_backend() -> String { "grpc".to_string() }
+fn default_cuda_device_id() -> i32 { 0 }
+
+/// Application configuration loaded from multiple sources
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     /// URL for the Triton Inference Server
     pub triton_endpoint: String,
@@ -200,12 +242,146 @@ pub struct Config {
     /// HTTP server port
     pub server_port: u16,
 
+    /// Inference backend to use: "grpc" or "cuda"
+    #[serde(default = "default_inference_backend")]
+    pub inference_backend: String,
+
+    /// CUDA device ID for CUDA backend
+    #[serde(default = "default_cuda_device_id")]
+    pub cuda_device_id: i32,
+
     /// Timeout for inference requests
+    #[serde(with = "duration_secs")]
     pub inference_timeout: Duration,
+
+    // Server Performance Configuration
+    /// Maximum number of concurrent WebSocket streams
+    #[serde(default = "default_max_concurrent_streams")]
+    pub max_concurrent_streams: usize,
+
+    /// Maximum number of concurrent batch requests  
+    #[serde(default = "default_max_concurrent_batches")]
+    pub max_concurrent_batches: usize,
+
+    /// Size of the inference queue
+    #[serde(default = "default_inference_queue_size")]
+    pub inference_queue_size: usize,
+
+    // Audio Processing Configuration
+    /// Audio buffer capacity in bytes
+    #[serde(default = "default_audio_buffer_capacity")]
+    pub audio_buffer_capacity: usize,
+
+    /// Maximum audio length for batch processing in seconds
+    #[serde(default = "default_max_batch_audio_length")]
+    pub max_batch_audio_length_secs: f32,
+
+    // Streaming Configuration
+    /// WebSocket stream timeout in seconds
+    #[serde(default = "default_stream_timeout_secs")]
+    pub stream_timeout_secs: u64,
+
+    /// Keepalive check period in milliseconds
+    #[serde(default = "default_keepalive_check_period_ms")]
+    pub keepalive_check_period_ms: u64,
+
+    // Model Configuration
+    /// Preprocessor model name
+    #[serde(default = "default_preprocessor_model_name")]
+    pub preprocessor_model_name: String,
+
+    /// Encoder model name
+    #[serde(default = "default_encoder_model_name")]
+    pub encoder_model_name: String,
+
+    /// Decoder and joint network model name
+    #[serde(default = "default_decoder_joint_model_name")]
+    pub decoder_joint_model_name: String,
+
+    /// Maximum symbols to predict per encoder frame
+    #[serde(default = "default_max_symbols_per_step")]
+    pub max_symbols_per_step: usize,
+
+    /// Maximum total tokens to generate in a single decoding session
+    #[serde(default = "default_max_total_tokens")]
+    pub max_total_tokens: usize,
+
+    // Platform Optimization Configuration
+    /// Enable platform-specific optimizations
+    #[serde(default = "default_enable_platform_optimizations")]
+    pub enable_platform_optimizations: bool,
+
+    /// Force specific I/O backend (if None, auto-detect optimal)
+    #[serde(default)]
+    pub force_io_backend: Option<String>,
+
+    /// Disable NUMA optimizations in cloud environments
+    #[serde(default = "default_disable_numa_in_cloud")]
+    pub disable_numa_in_cloud: bool,
+
+    /// Disable CPU affinity optimizations  
+    #[serde(default = "default_disable_cpu_affinity")]
+    pub disable_cpu_affinity: bool,
+
+    /// Enable io_uring even in cloud environments (expert mode)
+    #[serde(default = "default_force_io_uring")]
+    pub force_io_uring: bool,
 }
 
 impl Config {
-    /// Load configuration from environment variables with sensible defaults
+    /// Load configuration from multiple sources with precedence:
+    /// 1. Environment variables (highest priority)  
+    /// 2. config.yaml (if exists)
+    /// 3. config.toml (if exists)
+    /// 4. Built-in defaults (lowest priority)
+    pub fn load() -> Result<Self> {
+        let config: Config = Figment::new()
+            .merge(Self::default_figment())
+            .merge(Toml::file("config.toml"))
+            .merge(Yaml::file("config.yaml"))
+            .merge(Env::prefixed("AMIRA_"))
+            .merge(Env::raw().only(&[
+                "SERVER_HOST", "SERVER_PORT", "TRITON_ENDPOINT", 
+                "INFERENCE_TIMEOUT_SECS", "VOCABULARY_PATH"
+            ]))
+            .extract()
+            .map_err(|e| AppError::Configuration(format!("Failed to load configuration: {}", e)))?;
+
+        config.validate()?;
+        Ok(config)
+    }
+
+    /// Generate default configuration values
+    fn default_figment() -> Figment {
+        use figment::providers::Serialized;
+        
+        Figment::from(Serialized::defaults(Config {
+            triton_endpoint: "http://localhost:8001".to_string(),
+            vocabulary_path: PathBuf::from("../model-repo/vocab.txt"),
+            server_host: "0.0.0.0".to_string(),
+            server_port: 8057,
+            inference_timeout: Duration::from_secs(5),
+            max_concurrent_streams: default_max_concurrent_streams(),
+            max_concurrent_batches: default_max_concurrent_batches(),
+            inference_queue_size: default_inference_queue_size(),
+            audio_buffer_capacity: default_audio_buffer_capacity(),
+            max_batch_audio_length_secs: default_max_batch_audio_length(),
+            stream_timeout_secs: default_stream_timeout_secs(),
+            keepalive_check_period_ms: default_keepalive_check_period_ms(),
+            preprocessor_model_name: default_preprocessor_model_name(),
+            encoder_model_name: default_encoder_model_name(),
+            decoder_joint_model_name: default_decoder_joint_model_name(),
+            max_symbols_per_step: default_max_symbols_per_step(),
+            max_total_tokens: default_max_total_tokens(),
+            enable_platform_optimizations: default_enable_platform_optimizations(),
+            force_io_backend: None,
+            disable_numa_in_cloud: default_disable_numa_in_cloud(),
+            disable_cpu_affinity: default_disable_cpu_affinity(),
+            force_io_uring: default_force_io_uring(),
+        }))
+    }
+
+    /// Load configuration from environment variables with sensible defaults (legacy support)
     pub fn from_env() -> Result<Self> {
         let config = Self {
             triton_endpoint: env::var("TRITON_ENDPOINT")
@@ -229,6 +405,83 @@ impl Config {
                     .and_then(|s| s.parse().ok())
                     .unwrap_or(5),
             ),
+
+            // Use defaults for new fields (can be overridden by env vars)
+            max_concurrent_streams: env::var("MAX_CONCURRENT_STREAMS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or_else(default_max_concurrent_streams),
+
+            max_concurrent_batches: env::var("MAX_CONCURRENT_BATCHES")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or_else(default_max_concurrent_batches),
+
+            inference_queue_size: env::var("INFERENCE_QUEUE_SIZE")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or_else(default_inference_queue_size),
+
+            audio_buffer_capacity: env::var("AUDIO_BUFFER_CAPACITY")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or_else(default_audio_buffer_capacity),
+
+            max_batch_audio_length_secs: env::var("MAX_BATCH_AUDIO_LENGTH_SECS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or_else(default_max_batch_audio_length),
+
+            stream_timeout_secs: env::var("STREAM_TIMEOUT_SECS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or_else(default_stream_timeout_secs),
+
+            keepalive_check_period_ms: env::var("KEEPALIVE_CHECK_PERIOD_MS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or_else(default_keepalive_check_period_ms),
+
+            preprocessor_model_name: env::var("PREPROCESSOR_MODEL_NAME")
+                .unwrap_or_else(|_| default_preprocessor_model_name()),
+
+            encoder_model_name: env::var("ENCODER_MODEL_NAME")
+                .unwrap_or_else(|_| default_encoder_model_name()),
+
+            decoder_joint_model_name: env::var("DECODER_JOINT_MODEL_NAME")
+                .unwrap_or_else(|_| default_decoder_joint_model_name()),
+
+            max_symbols_per_step: env::var("MAX_SYMBOLS_PER_STEP")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or_else(default_max_symbols_per_step),
+
+            max_total_tokens: env::var("MAX_TOTAL_TOKENS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or_else(default_max_total_tokens),
+
+            enable_platform_optimizations: env::var("ENABLE_PLATFORM_OPTIMIZATIONS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or_else(default_enable_platform_optimizations),
+
+            force_io_backend: env::var("FORCE_IO_BACKEND").ok(),
+
+            disable_numa_in_cloud: env::var("DISABLE_NUMA_IN_CLOUD")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or_else(default_disable_numa_in_cloud),
+
+            disable_cpu_affinity: env::var("DISABLE_CPU_AFFINITY")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or_else(default_disable_cpu_affinity),
+
+            force_io_uring: env::var("FORCE_IO_URING")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or_else(default_force_io_uring),
         };
 
         config.validate()?;
@@ -281,10 +534,11 @@ impl Config {
         // Convert to string for analysis
         let path_str = path.to_string_lossy();
 
-        // Check for obvious path traversal patterns
-        if path_str.contains("..") || path_str.contains("//") {
+        // Check for obvious path traversal patterns (but allow relative paths like ../model-repo)
+        // Only block patterns that could be malicious like ../../etc/passwd
+        if path_str.contains("../..") || path_str.contains("//") {
             return Err(AppError::Configuration(format!(
-                "{} contains invalid path components (.. or //)",
+                "{} contains potentially unsafe path components",
                 field_name
             )));
         }
@@ -347,5 +601,17 @@ impl Config {
         }
 
         Ok(())
+    }
+    
+    /// Export configuration to TOML format
+    pub fn to_toml(&self) -> Result<String> {
+        toml::to_string_pretty(self)
+            .map_err(|e| AppError::Configuration(format!("Failed to serialize to TOML: {}", e)))
+    }
+    
+    /// Export configuration to YAML format
+    pub fn to_yaml(&self) -> Result<String> {
+        serde_yaml::to_string(self)
+            .map_err(|e| AppError::Configuration(format!("Failed to serialize to YAML: {}", e)))
     }
 }

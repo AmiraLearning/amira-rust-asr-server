@@ -9,8 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use crate::error::{AppError, Result};
 use crate::config::{memory as config, audio, model};
 
-// Temporary tracing macros until proper tracing is restored
-macro_rules! error { ($($tt:tt)*) => {}; }
+use tracing::error;
 
 /// A lock-free object pool for reusing allocations.
 /// 

@@ -8,10 +8,7 @@ use std::future::Future;
 use std::sync::Arc;
 use tokio::runtime::{Builder, Runtime};
 use tokio::task::JoinHandle;
-// Temporary tracing macros while resolving external dependencies
-macro_rules! debug { ($($tt:tt)*) => {}; }
-macro_rules! info { ($($tt:tt)*) => {}; }
-macro_rules! warn { ($($tt:tt)*) => {}; }
+use tracing::{debug, info, warn};
 
 /// Specialized executor for different types of workloads
 pub struct SpecializedExecutor {

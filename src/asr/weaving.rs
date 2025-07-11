@@ -5,9 +5,7 @@
 //! original Python implementation's techniques.
 
 use crate::asr::types::{ALPHA, EXPECTED_SILENCE_RATIO, MAX_ALIGN_DIST};
-// use tracing::{debug, info};  // Temporarily disabled
-macro_rules! debug { ($($tt:tt)*) => {}; }
-macro_rules! info { ($($tt:tt)*) => {}; }
+use tracing::{debug, info};
 
 /// Calculate the Levenshtein distance between two strings.
 ///

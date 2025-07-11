@@ -8,9 +8,35 @@ use crate::asr::zero_copy::{argmax_zero_copy, with_decoder_workspace, TensorView
 use crate::config::model::{BLANK_TOKEN_ID, MAX_SYMBOLS_PER_STEP, MAX_TOTAL_TOKENS};
 use crate::error::{AppError, Result};
 use std::future::Future;
-// Temporary tracing macros while resolving external dependencies
-macro_rules! debug { ($($tt:tt)*) => {}; }
-macro_rules! warn { ($($tt:tt)*) => {}; }
+use tracing::{debug, warn};
+
+/// Compatibility function that matches the legacy greedy_decode interface.
+/// This is a wrapper around the optimized zero-copy implementation.
+///
+/// # Arguments
+/// * `encoder_output` - The output from the encoder model (flattened)
+/// * `encoded_len` - The length of the encoded output (time steps)
+/// * `initial_state` - The initial decoder state
+/// * `decode_step_fn` - Function that returns logits and new state for a given input
+///
+/// # Returns
+/// The decoded token sequence and final decoder state
+pub async fn greedy_decode<F, Fut>(
+    encoder_output: &[f32],
+    encoded_len: i64,
+    initial_state: DecoderState,
+    decode_step_fn: F,
+) -> Result<(Vec<i32>, DecoderState)>
+where
+    F: FnMut(&[f32], &[i32], DecoderState) -> Fut,
+    Fut: Future<Output = Result<(Vec<f32>, DecoderState)>>,
+{
+    // Assume standard encoder output shape based on the flattened data and time steps
+    let features_per_step = encoder_output.len() / encoded_len as usize;
+    let encoder_shape = &[1, features_per_step, encoded_len as usize]; // [batch=1, features, time_steps]
+    
+    greedy_decode_zero_copy(encoder_output, encoder_shape, initial_state, decode_step_fn).await
+}
 
 /// Zero-copy optimized RNN-T greedy decoder.
 ///

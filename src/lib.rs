@@ -8,6 +8,9 @@ pub mod error;
 pub mod config;
 pub mod triton;
 pub mod asr;
+#[cfg(feature = "cuda")]
+pub mod cuda;
 pub mod performance;
 pub mod reliability;
 pub mod server;
+pub mod platform;

@@ -13,11 +13,7 @@ use serde::Deserialize;
 use tokio::select;
 use tokio::sync::oneshot;
 use tokio::time::{interval, timeout};
-// use tracing::{debug, error, info, warn};  // Temporarily disabled
-macro_rules! debug { ($($tt:tt)*) => {}; }
-macro_rules! error { ($($tt:tt)*) => {}; }
-macro_rules! info { ($($tt:tt)*) => {}; }
-macro_rules! warn { ($($tt:tt)*) => {}; }
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 use crate::asr::types::{AsrResponse, StreamStatus};

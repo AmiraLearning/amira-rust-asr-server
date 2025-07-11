@@ -236,6 +236,12 @@ impl OptimizedPooledConnection {
     pub fn client_mut(&mut self) -> &mut ReliableTritonClient {
         &mut self.client
     }
+    
+    /// Get a clone of the underlying client for use in closures
+    /// Note: This is safe because ReliableTritonClient is designed to be cloned
+    pub fn client_clone(&self) -> ReliableTritonClient {
+        self.client.clone()
+    }
 }
 
 impl Drop for OptimizedPooledConnection {

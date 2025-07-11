@@ -5,9 +5,7 @@
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::collections::HashMap;
-// Temporary tracing macros while resolving external dependencies
-macro_rules! debug { ($($tt:tt)*) => {}; }
-macro_rules! info { ($($tt:tt)*) => {}; }
+use tracing::{debug, info};
 
 /// Represents a NUMA node in the system
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

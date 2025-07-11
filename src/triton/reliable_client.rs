@@ -8,9 +8,7 @@ use crate::error::{AppError, Result};
 use crate::triton::client::TritonClient;
 use crate::triton::proto::{ModelInferRequest, ModelInferResponse};
 use std::sync::Arc;
-// use tracing::{debug, instrument, warn};  // Temporarily disabled
-macro_rules! debug { ($($tt:tt)*) => {}; }
-macro_rules! warn { ($($tt:tt)*) => {}; }
+use tracing::{debug, instrument, warn};
 
 /// A reliable Triton client with circuit breaker protection.
 #[derive(Clone)]
@@ -57,7 +55,7 @@ impl ReliableTritonClient {
     ///
     /// # Returns
     /// The inference response or an error if the circuit is open or the request fails
-    // #[instrument(skip(self, request), fields(model_name = %request.model_name, request_id = %request.id))]  // Temporarily disabled
+    #[instrument(skip(self, request), fields(model_name = %request.model_name, request_id = %request.id))]
     pub async fn infer(&self, request: ModelInferRequest) -> Result<ModelInferResponse> {
         let model_name = request.model_name.clone();
         let request_id = request.id.clone();
@@ -97,6 +95,12 @@ impl ReliableTritonClient {
     ) -> crate::triton::client::InferRequestBuilder {
         let client = self.client.lock().await;
         client.request_builder(model_name)
+    }
+
+    /// Get a mutable reference to the underlying TritonClient.
+    /// This method locks the client for the duration of the returned guard.
+    pub async fn client_mut(&self) -> tokio::sync::MutexGuard<'_, TritonClient> {
+        self.client.lock().await
     }
 
     /// Check if the client is healthy (circuit breaker temporarily disabled).

@@ -13,9 +13,7 @@ use crate::asr::weaving::{is_overlap_silence, weave_transcript_segs};
 use crate::asr::{AsrPipeline, TritonAsrPipeline};
 use crate::error::Result;
 
-// use tracing::{debug, info};  // Temporarily disabled
-macro_rules! debug { ($($tt:tt)*) => {}; }
-macro_rules! info { ($($tt:tt)*) => {}; }
+use tracing::{debug, info};
 
 /// Default minimum alignment score for transcript weaving
 const MIN_ALIGNMENT_SCORE: f32 = 0.01;

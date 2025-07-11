@@ -14,9 +14,7 @@ use axum::{
 use serde::Deserialize;
 use tower::ServiceBuilder;
 use tower_http::cors::CorsLayer;
-// use tracing::{error, info};  // Temporarily disabled
-macro_rules! error { ($($tt:tt)*) => {}; }
-macro_rules! info { ($($tt:tt)*) => {}; }
+use tracing::{error, info};
 
 use crate::asr::types::{AsrResponse, StreamStatus};
 use crate::asr::AsrPipeline;

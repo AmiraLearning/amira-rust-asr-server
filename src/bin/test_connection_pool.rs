@@ -7,12 +7,8 @@ use amira_rust_asr_server::triton::PoolConfig;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
-// Temporarily disabled tracing while resolving dependencies
-// use tracing::{info, warn};
-
-// Temporary macro replacements
-macro_rules! info { ($($tt:tt)*) => { println!("INFO: {}", format_args!($($tt)*)); }; }
-macro_rules! warn { ($($tt:tt)*) => { println!("WARN: {}", format_args!($($tt)*)); }; }
+use tracing::{info, warn};
+use tracing_subscriber;
 
 #[derive(Clone)]
 struct MockTritonServer {
@@ -116,7 +112,8 @@ async fn test_with_pooling(
         min_connections: concurrency / 2,
         max_idle_time: Duration::from_secs(300),
         acquire_timeout: Duration::from_millis(500),
-        cleanup_interval: Duration::from_secs(60),
+        max_connection_age: Duration::from_secs(3600),
+        health_check_batch_size: 8,
     };
 
     // For testing, we'll simulate the pool behavior
@@ -240,7 +237,8 @@ async fn test_pool_behavior() {
         min_connections: 2,
         max_idle_time: Duration::from_secs(10), // Short for testing
         acquire_timeout: Duration::from_millis(100),
-        cleanup_interval: Duration::from_secs(5),
+        max_connection_age: Duration::from_secs(600),
+        health_check_batch_size: 3,
     };
 
     println!(
@@ -294,11 +292,10 @@ async fn test_pool_behavior() {
 
 #[tokio::main]
 async fn main() {
-    // Initialize tracing (temporarily disabled)
-    // tracing_subscriber::fmt()
-    //     .with_max_level(tracing::Level::INFO)
-    //     .init();
-    println!("INFO: Tracing temporarily disabled");
+    // Initialize tracing
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .init();
 
     println!("🧪 Connection Pool Performance Testing");
     println!("=====================================\n");

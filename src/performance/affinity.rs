@@ -7,10 +7,7 @@ use core_affinity::{self, CoreId};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
-// Temporary tracing macros while resolving external dependencies
-macro_rules! debug { ($($tt:tt)*) => {}; }
-macro_rules! info { ($($tt:tt)*) => {}; }
-macro_rules! warn { ($($tt:tt)*) => {}; }
+use tracing::{debug, info, warn};
 
 /// Types of threads for affinity assignment
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -164,6 +161,7 @@ impl AffinityManager {
             }
             _ => {
                 // Large systems - optimal separation
+                // TODO: inference is happening on the GPU, so we should not assign it to the CPU
                 let inference_cores = total_cores * 60 / 100; // 60% for inference
                 let io_cores = total_cores * 20 / 100; // 20% for I/O
                 let network_cores = total_cores * 15 / 100; // 15% for network

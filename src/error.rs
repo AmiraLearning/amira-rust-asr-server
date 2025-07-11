@@ -34,13 +34,26 @@ pub enum AppError {
     #[error("Invalid request: {0}")]
     Validation(String),
 
+    /// Errors from invalid input data or parameters.
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
+
     /// Errors from invalid configuration.
     #[error("Configuration error: {0}")]
-    Configuration(String),
+    ConfigError(String),
+
+    /// CUDA-related errors.
+    #[cfg(feature = "cuda")]
+    #[error("CUDA error: {0}")]
+    CudaError(String),
 
     /// Errors from the underlying IO system.
     #[error("IO error: {0}")]
     Io(#[from] io::Error),
+
+    /// Network-related errors.
+    #[error("Network error: {0}")]
+    Network(String),
 
     /// Service capacity limit reached.
     #[error("Service capacity exceeded: {0}")]
@@ -68,9 +81,14 @@ impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let (status, error_message) = match &self {
             AppError::Validation(_) => (StatusCode::BAD_REQUEST, self.to_string()),
+            AppError::InvalidInput(_) => (StatusCode::BAD_REQUEST, self.to_string()),
+            AppError::ConfigError(_) => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
+            #[cfg(feature = "cuda")]
+            AppError::CudaError(_) => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
             AppError::CapacityExceeded(_) => (StatusCode::SERVICE_UNAVAILABLE, self.to_string()),
             AppError::ServiceUnavailable(_) => (StatusCode::SERVICE_UNAVAILABLE, self.to_string()),
             AppError::Timeout(_) => (StatusCode::REQUEST_TIMEOUT, self.to_string()),
+            AppError::Network(_) => (StatusCode::BAD_GATEWAY, self.to_string()),
             _ => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
         };
 

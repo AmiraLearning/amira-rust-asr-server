@@ -6,9 +6,7 @@
 
 use crate::asr::types::{SeqSlice, W2V_SAMPLE_RATE};
 use crate::error::{AppError, Result};
-// use tracing::debug;  // Temporarily disabled
-macro_rules! debug { ($($tt:tt)*) => {}; }
-macro_rules! warn { ($($tt:tt)*) => {}; }
+use tracing::{debug, warn};
 
 /// Convert raw audio bytes (16-bit PCM) to floating point samples.
 ///

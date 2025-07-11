@@ -15,11 +15,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tokio::sync::{mpsc, oneshot, Mutex};
-// Temporary tracing macros while resolving external dependencies
-macro_rules! debug { ($($tt:tt)*) => {}; }
-macro_rules! error { ($($tt:tt)*) => {}; }
-macro_rules! info { ($($tt:tt)*) => {}; }
-macro_rules! warn { ($($tt:tt)*) => {}; }
+use tracing::{debug, error, info, warn};
 
 use crate::asr::types::{AsrResponse, StreamStatus};
 use crate::asr::{AudioRingBuffer, IncrementalAsr};

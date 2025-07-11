@@ -4,34 +4,36 @@
 //! sets up the ASR pipeline and HTTP server, and starts listening for requests.
 
 use std::sync::Arc;
-// Temporarily disabled tracing while resolving dependencies
-// use tracing::info;
-// use tracing_subscriber::fmt;
-
-// Temporary macro replacements
-macro_rules! info { ($($tt:tt)*) => { println!("INFO: {}", format_args!($($tt)*)); }; }
+use tracing::info;
+use tracing_subscriber::fmt;
 
 use amira_rust_asr_server::{
     asr::{TritonAsrPipeline, Vocabulary},
     config::{concurrency::*, Config},
     error::{AppError, Result},
+    platform::{initialize_platform},
     server::{create_router, AppState},
     triton::{ConnectionPool, PoolConfig},
 };
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize tracing (temporarily disabled)
-    // fmt()
-    //     .with_target(false)
-    //     .with_thread_ids(true)
-    //     .with_level(true)
-    //     .json()
-    //     .init();
-    println!("INFO: Tracing temporarily disabled");
+    // Initialize tracing
+    fmt()
+        .with_target(false)
+        .with_thread_ids(true)
+        .with_level(true)
+        .json()
+        .init();
 
     // Load configuration
-    let config = Config::from_env()?;
+    let config = Config::load()?;
+    
+    // Initialize platform detection and configuration optimization
+    let platform_init = initialize_platform(config).await?;
+    let config = platform_init.effective_config;
+    
+    info!("Platform initialization complete");
 
     // Create Triton connection pool
     info!(
@@ -43,7 +45,7 @@ async fn main() -> Result<()> {
         min_connections: 5,
         ..Default::default()
     };
-    let triton_pool = ConnectionPool::new(config.triton_endpoint.clone(), pool_config)
+    let triton_pool = ConnectionPool::new(&config.triton_endpoint, pool_config)
         .await
         .map_err(AppError::from)?;
 

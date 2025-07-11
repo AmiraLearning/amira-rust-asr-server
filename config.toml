@@ -1,0 +1,81 @@
+# AMIRA Rust ASR Server Configuration
+#
+# This file provides default configuration values for the ASR server.
+# Environment variables can override these settings (see README.md for details).
+#
+# Configuration precedence (highest to lowest):
+# 1. Environment variables (AMIRA_* prefixed or legacy names)
+# 2. config.yaml (if exists)  
+# 3. config.toml (this file)
+# 4. Built-in defaults
+
+# HTTP server configuration
+server_host = "0.0.0.0"               # Server bind address
+server_port = 8057                    # Server port
+
+# Triton Inference Server configuration
+triton_endpoint = "http://localhost:8001"  # Triton server URL
+inference_timeout_secs = 5                 # Timeout for inference requests
+
+# File system paths
+vocabulary_path = "../model-repo/vocab.txt"  # Path to vocabulary file
+
+# Server Performance Configuration
+max_concurrent_streams = 10           # Maximum number of concurrent WebSocket streams
+max_concurrent_batches = 50           # Maximum number of concurrent batch requests
+inference_queue_size = 100            # Size of the inference queue
+
+# Audio Processing Configuration
+audio_buffer_capacity = 1048576       # Audio buffer capacity in bytes (1MB)
+max_batch_audio_length_secs = 30.0    # Maximum audio length for batch processing in seconds
+
+# WebSocket Streaming Configuration
+stream_timeout_secs = 30              # WebSocket stream timeout in seconds
+keepalive_check_period_ms = 100       # Keepalive check period in milliseconds
+
+# Model Configuration
+preprocessor_model_name = "preprocessor"      # Preprocessor model name
+encoder_model_name = "encoder"                # Encoder model name
+decoder_joint_model_name = "decoder_joint"   # Decoder and joint network model name
+max_symbols_per_step = 30                     # Maximum symbols to predict per encoder frame
+max_total_tokens = 200                        # Maximum total tokens to generate in a single decoding session
+
+# Platform Optimization Configuration
+enable_platform_optimizations = true      # Enable platform-specific optimizations
+force_io_backend = ""                     # Force specific I/O backend (empty = auto-detect optimal)
+disable_numa_in_cloud = true              # Disable NUMA optimizations in cloud environments  
+disable_cpu_affinity = false              # Disable CPU affinity optimizations
+force_io_uring = false                    # Enable io_uring even in cloud environments (expert mode)
+
+# Environment variable mappings:
+# Basic Configuration:
+# AMIRA_SERVER_HOST or SERVER_HOST → server_host
+# AMIRA_SERVER_PORT or SERVER_PORT → server_port  
+# AMIRA_TRITON_ENDPOINT or TRITON_ENDPOINT → triton_endpoint
+# AMIRA_INFERENCE_TIMEOUT_SECS or INFERENCE_TIMEOUT_SECS → inference_timeout_secs
+# AMIRA_VOCABULARY_PATH or VOCABULARY_PATH → vocabulary_path
+#
+# Performance Configuration:
+# AMIRA_MAX_CONCURRENT_STREAMS or MAX_CONCURRENT_STREAMS → max_concurrent_streams
+# AMIRA_MAX_CONCURRENT_BATCHES or MAX_CONCURRENT_BATCHES → max_concurrent_batches
+# AMIRA_INFERENCE_QUEUE_SIZE or INFERENCE_QUEUE_SIZE → inference_queue_size
+# AMIRA_AUDIO_BUFFER_CAPACITY or AUDIO_BUFFER_CAPACITY → audio_buffer_capacity
+# AMIRA_MAX_BATCH_AUDIO_LENGTH_SECS or MAX_BATCH_AUDIO_LENGTH_SECS → max_batch_audio_length_secs
+#
+# Streaming Configuration:
+# AMIRA_STREAM_TIMEOUT_SECS or STREAM_TIMEOUT_SECS → stream_timeout_secs
+# AMIRA_KEEPALIVE_CHECK_PERIOD_MS or KEEPALIVE_CHECK_PERIOD_MS → keepalive_check_period_ms
+#
+# Model Configuration:
+# AMIRA_PREPROCESSOR_MODEL_NAME or PREPROCESSOR_MODEL_NAME → preprocessor_model_name
+# AMIRA_ENCODER_MODEL_NAME or ENCODER_MODEL_NAME → encoder_model_name
+# AMIRA_DECODER_JOINT_MODEL_NAME or DECODER_JOINT_MODEL_NAME → decoder_joint_model_name
+# AMIRA_MAX_SYMBOLS_PER_STEP or MAX_SYMBOLS_PER_STEP → max_symbols_per_step
+# AMIRA_MAX_TOTAL_TOKENS or MAX_TOTAL_TOKENS → max_total_tokens
+#
+# Platform Optimization Configuration:
+# AMIRA_ENABLE_PLATFORM_OPTIMIZATIONS or ENABLE_PLATFORM_OPTIMIZATIONS → enable_platform_optimizations
+# AMIRA_FORCE_IO_BACKEND or FORCE_IO_BACKEND → force_io_backend
+# AMIRA_DISABLE_NUMA_IN_CLOUD or DISABLE_NUMA_IN_CLOUD → disable_numa_in_cloud
+# AMIRA_DISABLE_CPU_AFFINITY or DISABLE_CPU_AFFINITY → disable_cpu_affinity
+# AMIRA_FORCE_IO_URING or FORCE_IO_URING → force_io_uring
