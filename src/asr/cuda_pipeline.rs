@@ -6,13 +6,12 @@
 
 use async_trait::async_trait;
 use std::sync::Arc;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info};
 
-use crate::asr::decoder_optimized::greedy_decode;
 use crate::asr::pipeline::AsrPipeline;
 use crate::asr::types::{DecoderState, Transcription, Vocabulary};
 use crate::cuda::{
-    CudaSharedMemoryError, CudaSharedMemoryPool, CudaSharedMemoryRegion, ModelConfig,
+    CudaSharedMemoryPool, ModelConfig,
 };
 use crate::error::{AppError, Result};
 
@@ -320,7 +319,7 @@ impl CudaAsrPipeline {
     /// Convert tokens to text using vocabulary
     fn tokens_to_text(&self, tokens: &[u32]) -> String {
         tokens.iter()
-            .filter_map(|&token| self.vocabulary.get_token(token))
+            .filter_map(|&token| self.vocabulary.get_token(token as i32))
             .collect::<Vec<_>>()
             .join(" ")
     }
@@ -358,11 +357,17 @@ impl AsrPipeline for CudaAsrPipeline {
         debug!("Processing stream samples: {} samples", audio_samples.len());
         
         // Get or initialize encoder/decoder states
-        let mut encoder_state = state.encoder_state.clone()
-            .unwrap_or_else(|| self.initialize_encoder_state());
+        let mut encoder_state = if state.states_1.is_empty() {
+            self.initialize_encoder_state()
+        } else {
+            state.states_1.clone()
+        };
         
-        let mut decoder_state = state.decoder_state.clone()
-            .unwrap_or_else(|| self.initialize_decoder_state());
+        let mut decoder_state = if state.states_2.is_empty() {
+            self.initialize_decoder_state()
+        } else {
+            state.states_2.clone()
+        };
         
         // Run the three-stage pipeline
         let mel_features = self.run_preprocessor(audio_samples).await?;
@@ -370,8 +375,8 @@ impl AsrPipeline for CudaAsrPipeline {
         let (logits, updated_decoder_state) = self.run_decoder_joint(&encoder_output, &mut decoder_state).await?;
         
         // Update state
-        state.encoder_state = Some(updated_encoder_state);
-        state.decoder_state = Some(updated_decoder_state);
+        state.states_1 = updated_encoder_state;
+        state.states_2 = updated_decoder_state;
         
         // Convert logits to tokens and then to text
         let tokens = self.logits_to_tokens(&logits);
@@ -381,9 +386,10 @@ impl AsrPipeline for CudaAsrPipeline {
         
         Ok(Transcription {
             text,
-            tokens,
-            confidence: 1.0, // TODO: Calculate actual confidence
-            is_final: false,
+            tokens: tokens.into_iter().map(|t| t as i32).collect(),
+            audio_length_samples: audio_samples.len(),
+            features_length: mel_features.len() as i64,
+            encoded_length: encoder_output.len() as i64,
         })
     }
     
@@ -407,9 +413,10 @@ impl AsrPipeline for CudaAsrPipeline {
         
         Ok(Transcription {
             text,
-            tokens,
-            confidence: 1.0, // TODO: Calculate actual confidence
-            is_final: true,
+            tokens: tokens.into_iter().map(|t| t as i32).collect(),
+            audio_length_samples: audio_samples.len(),
+            features_length: mel_features.len() as i64,
+            encoded_length: encoder_output.len() as i64,
         })
     }
 }

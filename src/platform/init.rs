@@ -224,7 +224,7 @@ async fn select_io_backend(
     // Create the backend using bind address from config
     let bind_addr = format!("{}:{}", config.server_host, config.server_port)
         .parse()
-        .map_err(|e| AppError::Configuration(format!("Invalid server address: {}", e)))?;
+        .map_err(|e| AppError::ConfigError(format!("Invalid server address: {}", e)))?;
     
     create_optimal_io_backend(bind_addr)
 }
@@ -271,21 +271,21 @@ fn validate_platform_config(
         match forced_backend.as_str() {
             "io_uring" => {
                 if !*capabilities.feature_flags.get("io_uring").unwrap_or(&false) {
-                    return Err(AppError::Configuration(
+                    return Err(AppError::ConfigError(
                         "io_uring backend forced but not available on this platform".to_string()
                     ));
                 }
             },
             "epoll" => {
                 if !*capabilities.feature_flags.get("epoll").unwrap_or(&false) {
-                    return Err(AppError::Configuration(
+                    return Err(AppError::ConfigError(
                         "epoll backend forced but not available on this platform".to_string()
                     ));
                 }
             },
             "kqueue" => {
                 if !*capabilities.feature_flags.get("kqueue").unwrap_or(&false) {
-                    return Err(AppError::Configuration(
+                    return Err(AppError::ConfigError(
                         "kqueue backend forced but not available on this platform".to_string()
                     ));
                 }

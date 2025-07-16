@@ -19,6 +19,10 @@ path = "src/main.rs"
 name = "test-connection-pool"
 path = "src/bin/test_connection_pool.rs"
 
+[[bin]]
+name = "test-cuda-integration"
+path = "src/bin/test_cuda_integration.rs"
+
 [lib]
 name = "amira_rust_asr_server"
 path = "src/lib.rs"

@@ -284,7 +284,7 @@ impl ModelConfig {
 
 // FFI declarations for CUDA helper functions
 unsafe extern "C" {
-    fn get_cuda_device_count(count: *mut c_int) -> CudaError;
+    fn get_cuda_device_count_ffi(count: *mut c_int) -> CudaError;
     fn CudaSharedMemoryRegionCreate(
         name: *const c_char,
         byte_size: usize,
@@ -594,7 +594,7 @@ impl CudaSharedMemoryPool {
 /// Get the number of available CUDA devices
 pub fn get_cuda_device_count() -> Result<i32, CudaSharedMemoryError> {
     let mut count: c_int = 0;
-    let result = unsafe { get_cuda_device_count(&mut count) };
+    let result = unsafe { get_cuda_device_count_ffi(&mut count) };
     
     if result != CudaError::CudaSuccess {
         return Err(result.into());

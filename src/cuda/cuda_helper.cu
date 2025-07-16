@@ -19,7 +19,7 @@ typedef enum {
 } CudaError;
 
 // Function from Phase 1 - keep it for compatibility
-extern "C" CudaError get_cuda_device_count(int* count) {
+extern "C" CudaError get_cuda_device_count_ffi(int* count) {
     cudaError_t result = cudaGetDeviceCount(count);
     if (result == cudaSuccess) {
         return CUDA_SUCCESS;
