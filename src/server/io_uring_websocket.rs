@@ -278,7 +278,7 @@ impl IoUringWebSocketSession {
         // Check if we have enough data to process
         if self.audio_buffer.available_read() >= 32000 { // ~1 second at 16kHz
             let audio = self.audio_buffer.read(32000)
-                .ok_or_else(|| AppError::Audio("Failed to read from audio buffer".to_string()))?;
+                .ok_or_else(|| AppError::Asr(AsrError::AudioProcessing(AudioError::InvalidFormat("Failed to read from audio buffer".to_string()))?;
             
             // Process with incremental ASR
             match self.incremental_asr.process_chunk(&audio).await {

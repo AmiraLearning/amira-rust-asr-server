@@ -6,8 +6,8 @@
 use async_trait::async_trait;
 use std::collections::HashMap;
 
-use crate::config::model;
-use crate::error::{AppError, Result};
+use crate::constants::triton;
+use crate::error::{AppError, AsrError, ModelError, Result};
 use crate::triton::client::TritonClient;
 use crate::triton::proto::{
     model_infer_request::{InferInputTensor, InferRequestedOutputTensor},
@@ -135,11 +135,11 @@ impl PreprocessorModel {
         let tensors = parse_raw_tensors(&response, &expected_tensors)?;
 
         let features_tensor = tensors.get("features").ok_or_else(|| {
-            AppError::Model("Missing features tensor in preprocessor response".to_string())
+            AppError::Asr(AsrError::ModelInference(ModelError::Inference("Missing features tensor in preprocessor response".to_string())))
         })?;
 
         let features_length_tensor = tensors.get("features_length").ok_or_else(|| {
-            AppError::Model("Missing features_length tensor in preprocessor response".to_string())
+            AppError::Asr(AsrError::ModelInference(ModelError::Inference("Missing features_length tensor in preprocessor response".to_string())))
         })?;
 
         let features = features_tensor.as_f32()?;
@@ -158,7 +158,7 @@ impl TritonModel for PreprocessorModel {
     type Output = PreprocessorOutput;
 
     fn name(&self) -> &str {
-        model::PREPROCESSOR_MODEL_NAME
+        triton::PREPROCESSOR_MODEL_NAME
     }
 
     async fn infer(&self, client: &mut TritonClient, input: Self::Input) -> Result<Self::Output> {
@@ -229,11 +229,11 @@ impl TritonModel for PreprocessorModel {
 
         // Extract features and features_len
         let features_tensor = tensors.get("features").ok_or_else(|| {
-            AppError::Model("Missing features tensor in preprocessor response".to_string())
+            AppError::Asr(AsrError::ModelInference(ModelError::Inference("Missing features tensor in preprocessor response".to_string())))
         })?;
 
         let features_lens_tensor = tensors.get("features_lens").ok_or_else(|| {
-            AppError::Model("Missing features_lens tensor in preprocessor response".to_string())
+            AppError::Asr(AsrError::ModelInference(ModelError::Inference("Missing features_lens tensor in preprocessor response".to_string())))
         })?;
 
         let features = features_tensor.as_f32()?;
@@ -273,7 +273,7 @@ impl TritonModel for EncoderModel {
     type Output = EncoderOutput;
 
     fn name(&self) -> &str {
-        model::ENCODER_MODEL_NAME
+        triton::ENCODER_MODEL_NAME
     }
 
     async fn infer(&self, client: &mut TritonClient, input: Self::Input) -> Result<Self::Output> {
@@ -342,11 +342,11 @@ impl TritonModel for EncoderModel {
 
         // Extract outputs and encoded_lengths
         let outputs_tensor = tensors.get("outputs").ok_or_else(|| {
-            AppError::Model("Missing outputs tensor in encoder response".to_string())
+            AppError::Asr(AsrError::ModelInference(ModelError::Inference("Missing outputs tensor in encoder response".to_string())))
         })?;
 
         let encoded_lengths_tensor = tensors.get("encoded_lengths").ok_or_else(|| {
-            AppError::Model("Missing encoded_lengths tensor in encoder response".to_string())
+            AppError::Asr(AsrError::ModelInference(ModelError::Inference("Missing encoded_lengths tensor in encoder response".to_string())))
         })?;
 
         let outputs = outputs_tensor.as_f32()?;
@@ -445,7 +445,7 @@ impl DecoderJointModel {
             .with_input(InferInputTensor {
                 name: "input_states_1".to_string(),
                 datatype: "FP32".to_string(),
-                shape: vec![2, 1, model::DECODER_STATE_SIZE as i64],
+                shape: vec![2, 1, triton::DECODER_STATE_SIZE as i64],
                 contents: Some(InferTensorContents {
                     fp32_contents: input.states_1.to_vec(), // Still need to copy for protobuf
                     ..Default::default()
@@ -455,7 +455,7 @@ impl DecoderJointModel {
             .with_input(InferInputTensor {
                 name: "input_states_2".to_string(),
                 datatype: "FP32".to_string(),
-                shape: vec![2, 1, model::DECODER_STATE_SIZE as i64],
+                shape: vec![2, 1, triton::DECODER_STATE_SIZE as i64],
                 contents: Some(InferTensorContents {
                     fp32_contents: input.states_2.to_vec(), // Still need to copy for protobuf
                     ..Default::default()
@@ -492,7 +492,7 @@ impl DecoderJointModel {
                 TensorDef::new(
                     "outputs",
                     TensorDataType::Float32,
-                    TensorShape::new(vec![1, model::VOCABULARY_SIZE as i64]),
+                    TensorShape::new(vec![1, triton::VOCABULARY_SIZE as i64]),
                 ),
             );
 
@@ -501,7 +501,7 @@ impl DecoderJointModel {
                 TensorDef::new(
                     "output_states_1",
                     TensorDataType::Float32,
-                    TensorShape::new(vec![2, 1, model::DECODER_STATE_SIZE as i64]),
+                    TensorShape::new(vec![2, 1, triton::DECODER_STATE_SIZE as i64]),
                 ),
             );
 
@@ -510,7 +510,7 @@ impl DecoderJointModel {
                 TensorDef::new(
                     "output_states_2",
                     TensorDataType::Float32,
-                    TensorShape::new(vec![2, 1, model::DECODER_STATE_SIZE as i64]),
+                    TensorShape::new(vec![2, 1, triton::DECODER_STATE_SIZE as i64]),
                 ),
             );
 
@@ -520,15 +520,15 @@ impl DecoderJointModel {
         let tensors = parse_raw_tensors(&response, &expected_tensors)?;
 
         let logits_tensor = tensors.get("outputs").ok_or_else(|| {
-            AppError::Model("Missing outputs tensor in decoder_joint response".to_string())
+            AppError::Asr(AsrError::ModelInference(ModelError::Inference("Missing outputs tensor in decoder_joint response".to_string())))
         })?;
 
         let states_1_tensor = tensors.get("output_states_1").ok_or_else(|| {
-            AppError::Model("Missing output_states_1 tensor in decoder_joint response".to_string())
+            AppError::Asr(AsrError::ModelInference(ModelError::Inference("Missing output_states_1 tensor in decoder_joint response".to_string())))
         })?;
 
         let states_2_tensor = tensors.get("output_states_2").ok_or_else(|| {
-            AppError::Model("Missing output_states_2 tensor in decoder_joint response".to_string())
+            AppError::Asr(AsrError::ModelInference(ModelError::Inference("Missing output_states_2 tensor in decoder_joint response".to_string())))
         })?;
 
         let logits = logits_tensor.as_f32()?;
@@ -549,7 +549,7 @@ impl TritonModel for DecoderJointModel {
     type Output = DecoderJointOutput;
 
     fn name(&self) -> &str {
-        model::DECODER_JOINT_MODEL_NAME
+        triton::DECODER_JOINT_MODEL_NAME
     }
 
     async fn infer(&self, client: &mut TritonClient, input: Self::Input) -> Result<Self::Output> {
@@ -591,7 +591,7 @@ impl TritonModel for DecoderJointModel {
             .with_input(InferInputTensor {
                 name: "input_states_1".to_string(),
                 datatype: "FP32".to_string(),
-                shape: vec![2, 1, model::DECODER_STATE_SIZE as i64],
+                shape: vec![2, 1, triton::DECODER_STATE_SIZE as i64],
                 contents: Some(InferTensorContents {
                     fp32_contents: input.states_1,
                     ..Default::default()
@@ -601,7 +601,7 @@ impl TritonModel for DecoderJointModel {
             .with_input(InferInputTensor {
                 name: "input_states_2".to_string(),
                 datatype: "FP32".to_string(),
-                shape: vec![2, 1, model::DECODER_STATE_SIZE as i64],
+                shape: vec![2, 1, triton::DECODER_STATE_SIZE as i64],
                 contents: Some(InferTensorContents {
                     fp32_contents: input.states_2,
                     ..Default::default()
@@ -638,7 +638,7 @@ impl TritonModel for DecoderJointModel {
                 TensorDef::new(
                     "outputs",
                     TensorDataType::Float32,
-                    TensorShape::new(vec![1, -1, 1, model::VOCABULARY_SIZE as i64]),
+                    TensorShape::new(vec![1, -1, 1, triton::VOCABULARY_SIZE as i64]),
                 ),
             );
 
@@ -647,7 +647,7 @@ impl TritonModel for DecoderJointModel {
                 TensorDef::new(
                     "output_states_1",
                     TensorDataType::Float32,
-                    TensorShape::new(vec![2, 1, model::DECODER_STATE_SIZE as i64]),
+                    TensorShape::new(vec![2, 1, triton::DECODER_STATE_SIZE as i64]),
                 ),
             );
 
@@ -656,7 +656,7 @@ impl TritonModel for DecoderJointModel {
                 TensorDef::new(
                     "output_states_2",
                     TensorDataType::Float32,
-                    TensorShape::new(vec![2, 1, model::DECODER_STATE_SIZE as i64]),
+                    TensorShape::new(vec![2, 1, triton::DECODER_STATE_SIZE as i64]),
                 ),
             );
 
@@ -667,15 +667,15 @@ impl TritonModel for DecoderJointModel {
 
         // Extract outputs and states
         let outputs_tensor = tensors.get("outputs").ok_or_else(|| {
-            AppError::Model("Missing outputs tensor in decoder_joint response".to_string())
+            AppError::Asr(AsrError::ModelInference(ModelError::Inference("Missing outputs tensor in decoder_joint response".to_string())))
         })?;
 
         let output_states_1_tensor = tensors.get("output_states_1").ok_or_else(|| {
-            AppError::Model("Missing output_states_1 tensor in decoder_joint response".to_string())
+            AppError::Asr(AsrError::ModelInference(ModelError::Inference("Missing output_states_1 tensor in decoder_joint response".to_string())))
         })?;
 
         let output_states_2_tensor = tensors.get("output_states_2").ok_or_else(|| {
-            AppError::Model("Missing output_states_2 tensor in decoder_joint response".to_string())
+            AppError::Asr(AsrError::ModelInference(ModelError::Inference("Missing output_states_2 tensor in decoder_joint response".to_string())))
         })?;
 
         let logits = outputs_tensor.as_f32()?;

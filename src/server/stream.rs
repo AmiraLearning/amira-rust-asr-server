@@ -19,11 +19,12 @@ use uuid::Uuid;
 use crate::asr::types::{AsrResponse, StreamStatus};
 use crate::asr::{AudioRingBuffer, IncrementalAsr};
 // use crate::performance::specialized_pools::spawn_io;  // Disabled for now
-use crate::config::audio::{BUFFER_CAPACITY, MIN_PARTIAL_TRANSCRIPTION_SAMPLES};
-use crate::config::streaming::{
+use crate::constants::audio::{BUFFER_CAPACITY, MIN_PARTIAL_TRANSCRIPTION_SAMPLES};
+use crate::constants::streaming::{
     CONTROL_BYTE_END, CONTROL_BYTE_KEEPALIVE, KEEPALIVE_CHECK_PERIOD_MS, STREAM_TIMEOUT_SECS,
 };
-use crate::error::{AppError, Result};
+use crate::error::{AppError, AsrError, AudioError, ServerError, Result};
+use crate::async_patterns::{AsyncTaskManager, ErrorRecoveryManager, PerformanceMonitor};
 use crate::server::AppState;
 
 /// Handle for a streaming ASR session.
@@ -77,6 +78,17 @@ pub struct StreamProcessor {
 
     /// Rate limiting: start time of current window  
     window_start: Instant,
+    
+    /// Async task manager for concurrency control
+    #[allow(dead_code)]
+    task_manager: AsyncTaskManager,
+    
+    /// Error recovery manager for resilience
+    #[allow(dead_code)]
+    error_recovery: ErrorRecoveryManager,
+    
+    /// Performance monitoring
+    performance_monitor: PerformanceMonitor,
 }
 
 impl StreamProcessor {
@@ -116,6 +128,13 @@ impl StreamProcessor {
             is_paused: false,
             message_count: 0,
             window_start: Instant::now(),
+            task_manager: AsyncTaskManager::new(4, Duration::from_secs(10)),
+            error_recovery: ErrorRecoveryManager::new(
+                3, // max retries
+                Duration::from_millis(100), // base delay
+                Duration::from_secs(5), // max delay
+            ),
+            performance_monitor: PerformanceMonitor::new(),
         }
     }
 
@@ -201,11 +220,11 @@ impl StreamProcessor {
         // Validate message size to prevent DoS attacks
         const MAX_CHUNK_SIZE: usize = 1024 * 1024; // 1MB per chunk
         if data.len() > MAX_CHUNK_SIZE {
-            return Err(AppError::Validation(format!(
+            return Err(AppError::Server(ServerError::RequestValidation(format!(
                 "Audio chunk too large: {} bytes (max: {} bytes)",
                 data.len(),
                 MAX_CHUNK_SIZE
-            )));
+            ))));
         }
 
         // Rate limiting: check message frequency
@@ -219,28 +238,28 @@ impl StreamProcessor {
                         "End of stream signal received for stream {}",
                         self.stream_id
                     );
-                    return Err(AppError::Validation("End of stream".to_string()));
+                    return Err(AppError::Server(ServerError::RequestValidation("End of stream".to_string())));
                 }
                 CONTROL_BYTE_KEEPALIVE => {
                     self.is_paused = true;
                     return Ok(());
                 }
-                _ => return Err(AppError::Validation("Unknown control byte".to_string())),
+                _ => return Err(AppError::Server(ServerError::RequestValidation("Unknown control byte".to_string()))),
             }
         }
 
         // Validate audio data format (must be even for 16-bit PCM)
         if data.len() % 2 != 0 {
-            return Err(AppError::Validation(
+            return Err(AppError::Server(ServerError::RequestValidation(
                 "Audio data length must be even for 16-bit PCM".to_string(),
-            ));
+            )));
         }
 
         // Check if data is empty (but not a control byte)
         if data.is_empty() {
-            return Err(AppError::Validation(
+            return Err(AppError::Server(ServerError::RequestValidation(
                 "Empty audio chunk received".to_string(),
-            ));
+            )));
         }
 
         // Buffer audio data
@@ -267,35 +286,52 @@ impl StreamProcessor {
             return Ok(());
         }
 
-        let audio_data = self
+        let mut audio_data = vec![0u8; available];
+        let bytes_read = self
             .audio_buffer
-            .read(available)
-            .ok_or_else(|| AppError::Audio("Failed to read from buffer".to_string()))?;
+            .read_into(available, &mut audio_data)
+            .ok_or_else(|| AppError::Asr(AsrError::AudioProcessing(AudioError::InvalidFormat("Failed to read from buffer".to_string()))))?;
+        
+        if bytes_read != available {
+            return Err(AppError::Asr(AsrError::AudioProcessing(AudioError::InvalidFormat("Failed to read expected amount from buffer".to_string()))));
+        }
 
-        // Process audio with incremental ASR processor
-        match timeout(
+        // Record processing start time
+        let start_time = Instant::now();
+
+        // Process audio with timeout (simplified for now)
+        let transcription = match timeout(
             Duration::from_secs(5),
             self.incremental_asr.process_chunk(&audio_data),
         )
         .await
         {
-            Ok(Ok(transcription)) => {
-                // Update transcription
-                self.last_transcription = transcription;
+            Ok(Ok(transcription)) => transcription,
+            Ok(Err(e)) => return Err(AppError::Asr(AsrError::Pipeline(format!("ASR processing failed: {}", e)))),
+            Err(_) => return Err(AppError::Asr(AsrError::Pipeline("ASR processing timeout".to_string()))),
+        };
 
-                // Build metadata
-                let audio_length = self.incremental_asr.audio_length();
-                let metadata_value = serde_json::json!({
-                    "audio_length_seconds": audio_length,
-                });
+        // Record processing time
+        let processing_time = start_time.elapsed();
+        self.performance_monitor.record_request(processing_time);
 
-                // Convert to HashMap for AsrResponse
-                let mut metadata = HashMap::new();
-                if let serde_json::Value::Object(map) = metadata_value {
-                    for (k, v) in map {
-                        metadata.insert(k, v);
-                    }
-                }
+        // Update transcription
+        self.last_transcription = transcription;
+
+        // Build metadata
+        let audio_length = self.incremental_asr.audio_length();
+        let metadata_value = serde_json::json!({
+            "audio_length_seconds": audio_length,
+            "processing_time_ms": processing_time.as_millis(),
+        });
+
+        // Convert to HashMap for AsrResponse
+        let mut metadata = HashMap::new();
+        if let serde_json::Value::Object(map) = metadata_value {
+            for (k, v) in map {
+                metadata.insert(k, v);
+            }
+        }
 
                 // Build response for client
                 let response = AsrResponse {
@@ -312,16 +348,6 @@ impl StreamProcessor {
 
                 // Move serialization off the main event loop to prevent blocking
                 self.send_response_async(response).await?;
-            }
-            Ok(Err(e)) => {
-                error!("Inference error for stream {}: {}", self.stream_id, e);
-                self.send_error(&e.to_string()).await?;
-            }
-            Err(_) => {
-                error!("Inference timeout for stream {}", self.stream_id);
-                self.send_error("Inference timeout").await?;
-            }
-        }
 
         Ok(())
     }
@@ -419,10 +445,10 @@ impl StreamProcessor {
                 "Rate limit exceeded for stream {}: {} messages in current window",
                 self.stream_id, self.message_count
             );
-            return Err(AppError::Validation(format!(
+            return Err(AppError::Server(ServerError::RequestValidation(format!(
                 "Rate limit exceeded: max {} messages per second allowed",
                 MAX_MESSAGES_PER_WINDOW
-            )));
+            ))));
         }
 
         // Log warning when approaching limit

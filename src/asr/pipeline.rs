@@ -66,6 +66,19 @@ pub trait AsrPipeline: Send + Sync {
     async fn process_batch_samples(&self, audio_samples: &[f32]) -> Result<Transcription>;
 }
 
+/// Decoding algorithm selection.
+#[derive(Debug, Clone)]
+pub enum DecodingAlgorithm {
+    /// Greedy decoding (faster, less accurate)
+    Greedy,
+}
+
+impl Default for DecodingAlgorithm {
+    fn default() -> Self {
+        Self::Greedy
+    }
+}
+
 /// ASR pipeline implementation using Triton Inference Server.
 pub struct TritonAsrPipeline {
     /// Connection pool for Triton clients
@@ -92,7 +105,7 @@ impl TritonAsrPipeline {
     /// * `vocabulary` - The vocabulary for token decoding
     ///
     /// # Returns
-    /// A new ASR pipeline
+    /// A new ASR pipeline with default greedy decoding
     pub fn new(connection_pool: Arc<ConnectionPool>, vocabulary: Arc<Vocabulary>) -> Self {
         Self {
             connection_pool,
@@ -102,6 +115,7 @@ impl TritonAsrPipeline {
             decoder_joint: DecoderJointModel,
         }
     }
+
 
     /// Convert audio bytes to normalized samples using optimized SIMD conversion.
     ///
@@ -115,10 +129,8 @@ impl TritonAsrPipeline {
         let mut audio_buffer = global_pools().audio_buffers.get();
         audio_buffer.clear();
 
-        // Use regular conversion for now
-        use crate::asr::audio::bytes_to_f32_samples;
-        let samples = bytes_to_f32_samples(audio_bytes);
-        audio_buffer.extend(samples);
+        // Use optimized conversion from performance_opts
+        crate::performance_opts::audio::bytes_to_f32_optimized(audio_bytes, &mut audio_buffer);
 
         // Take ownership to return from pool
         audio_buffer
@@ -141,6 +153,7 @@ impl TritonAsrPipeline {
     ///
     /// # Returns
     /// The transcription result and updated decoder state
+    #[allow(dead_code)]
     async fn process_audio_internal(
         &self,
         waveform: &[f32],
@@ -184,19 +197,20 @@ impl TritonAsrPipeline {
         );
 
         // Step 3: RNN-T Decoding
+        let decoding_algorithm_name = "greedy";
+        
         info!(
-            "Starting RNN-T decoding with {} encoder frames",
-            encoder_output.encoded_len
+            "Starting RNN-T decoding with {} encoder frames using {}",
+            encoder_output.encoded_len, decoding_algorithm_name
         );
         let decoder_state = initial_state;
         let decoder_joint_ref = &self.decoder_joint;
 
-        // Create the decode step function that will be called by greedy_decode
-        // TODO: Update this to work properly with ReliableTritonClient pooling
+        // Create the decode step function that will be called by the decoder
         let client_for_decode = pooled_connection.client_clone();
         let decode_step = |encoder_frame: &[f32], targets: &[i32], state: DecoderState| {
             // Clone the client for this specific decode step
-            let mut client = client_for_decode.clone();
+            let client = client_for_decode.clone();
             let decoder = decoder_joint_ref;
             
             // For now, we still need to clone for the async closure, but we avoid the double clone
@@ -223,6 +237,7 @@ impl TritonAsrPipeline {
             }
         };
 
+        // Use greedy decoding
         let (tokens, final_state) = greedy_decode(
             &encoder_output.outputs,
             encoder_output.encoded_len,
@@ -307,7 +322,7 @@ impl TritonAsrPipeline {
         // Create the zero-copy decode step function
         let client_for_decode = pooled_connection.client_clone();
         let decode_step = |encoder_frame: &[f32], targets: &[i32], state: DecoderState| {
-            let mut client = client_for_decode.clone();
+            let client = client_for_decode.clone();
             let decoder = decoder_joint_ref;
             
             // Still need to clone for async closure but this is more optimal than original

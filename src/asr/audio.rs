@@ -5,8 +5,8 @@
 //! streaming audio.
 
 use crate::asr::types::{SeqSlice, W2V_SAMPLE_RATE};
-use crate::error::{AppError, Result};
-use tracing::{debug, warn};
+use crate::error::{AppError, AsrError, AudioError, Result};
+use tracing::debug;
 
 /// Convert raw audio bytes (16-bit PCM) to floating point samples.
 ///
@@ -32,8 +32,8 @@ pub fn bytes_to_f32_samples(audio_bytes: &[u8]) -> Vec<f32> {
 /// * `audio_bytes` - Raw audio bytes in 16-bit PCM format
 /// * `output` - Output buffer to write samples into (will be cleared first)
 pub fn bytes_to_f32_samples_into(audio_bytes: &[u8], output: &mut Vec<f32>) {
-    // Use regular SIMD optimized version (advanced version temporarily disabled)
-    crate::asr::simd::bytes_to_f32_optimized(audio_bytes, output);
+    // Use optimized version from performance_opts
+    crate::performance_opts::audio::bytes_to_f32_optimized(audio_bytes, output);
 }
 
 /// Get the length of audio in seconds.
@@ -55,8 +55,8 @@ pub fn audio_len(audio: &[f32]) -> f32 {
 /// # Returns
 /// Mean amplitude value
 pub fn calculate_mean_amplitude(audio: &[f32]) -> f32 {
-    // Use regular calculation (optimized version temporarily disabled)
-    audio.iter().map(|&x| x.abs()).sum::<f32>() / audio.len() as f32
+    // Use optimized version from performance_opts
+    crate::performance_opts::audio::mean_amplitude_optimized(audio)
 }
 
 /// Generate sequence windows with overlap.
@@ -346,7 +346,7 @@ impl AudioRingBuffer {
         
         let len = data.len();
         if len > self.available_write() {
-            return Err(AppError::Audio("Buffer overflow".to_string()));
+            return Err(AppError::Asr(AsrError::AudioProcessing(AudioError::InvalidFormat("Buffer overflow".to_string()))));
         }
 
         let current_write_pos = self.write_pos.load(Ordering::Acquire);

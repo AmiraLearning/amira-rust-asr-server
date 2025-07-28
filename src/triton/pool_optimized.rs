@@ -16,6 +16,7 @@ use tracing::{info, warn};
 
 use crate::error::{AppError, Result};
 use crate::triton::{ReliableTritonClient, ReliableTritonClientBuilder};
+// use crate::raii::{ResourceGuard, PooledConnection, ConnectionPool as RaiiConnectionPool};
 
 /// Optimized configuration for the connection pool
 #[derive(Debug, Clone)]

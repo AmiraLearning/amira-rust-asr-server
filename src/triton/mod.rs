@@ -186,4 +186,4 @@ pub use pool_optimized::{
     PoolStatsSnapshot
 };
 pub use reliable_client::{ReliableTritonClient, ReliableTritonClientBuilder};
-pub use types::{RawTensor, TensorData, TensorDef, TensorShape};
+pub use types::{parse_raw_tensors, RawTensor, TensorData, TensorDataType, TensorDef, TensorShape};

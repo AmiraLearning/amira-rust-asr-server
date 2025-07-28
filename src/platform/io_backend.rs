@@ -2,10 +2,10 @@
 
 use async_trait::async_trait;
 use std::net::SocketAddr;
-use std::pin::Pin;
-use std::task::{Context, Poll};
+// use std::pin::Pin;
+// use std::task::{Context, Poll};
 use tokio::net::{TcpListener, TcpStream};
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 use super::detection::{detect_platform, IoBackendType, VirtualizationEnvironment};
 use crate::error::{AppError, Result};

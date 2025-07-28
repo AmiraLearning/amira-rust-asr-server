@@ -2,7 +2,7 @@
 //!
 //! This module defines helper types for working with Triton tensors and models.
 
-use crate::error::{AppError, Result};
+use crate::error::{AppError, AsrError, ModelError, Result};
 use crate::triton::proto::{InferTensorContents, ModelInferResponse};
 use bytes::Bytes;
 use std::collections::HashMap;
@@ -217,10 +217,10 @@ impl RawTensor {
     /// Parse the tensor's raw binary data as f32.
     pub fn as_f32(&self) -> Result<Vec<f32>> {
         if self.def.dtype != TensorDataType::Float32 {
-            return Err(AppError::Model(format!(
+            return Err(AppError::Asr(AsrError::ModelInference(ModelError::Inference(format!(
                 "Cannot parse tensor '{}' as f32, its type is {:?}",
                 self.def.name, self.def.dtype
-            )));
+            )))));
         }
 
         let vec_len = self.data.len() / 4;
@@ -229,10 +229,10 @@ impl RawTensor {
         for i in 0..vec_len {
             let offset = i * 4;
             let chunk: [u8; 4] = self.data[offset..offset + 4].try_into().map_err(|_| {
-                AppError::Model(format!(
+                AppError::Asr(AsrError::ModelInference(ModelError::Inference(format!(
                     "Failed to read f32 from tensor '{}'",
                     self.def.name
-                ))
+                ))))
             })?;
             result.push(f32::from_le_bytes(chunk));
         }
@@ -243,10 +243,10 @@ impl RawTensor {
     /// Parse the tensor's raw binary data as i32.
     pub fn as_i32(&self) -> Result<Vec<i32>> {
         if self.def.dtype != TensorDataType::Int32 {
-            return Err(AppError::Model(format!(
+            return Err(AppError::Asr(AsrError::ModelInference(ModelError::Inference(format!(
                 "Cannot parse tensor '{}' as i32, its type is {:?}",
                 self.def.name, self.def.dtype
-            )));
+            )))));
         }
 
         let vec_len = self.data.len() / 4;
@@ -255,10 +255,10 @@ impl RawTensor {
         for i in 0..vec_len {
             let offset = i * 4;
             let chunk: [u8; 4] = self.data[offset..offset + 4].try_into().map_err(|_| {
-                AppError::Model(format!(
+                AppError::Asr(AsrError::ModelInference(ModelError::Inference(format!(
                     "Failed to read i32 from tensor '{}'",
                     self.def.name
-                ))
+                ))))
             })?;
             result.push(i32::from_le_bytes(chunk));
         }
@@ -269,10 +269,10 @@ impl RawTensor {
     /// Parse the tensor's raw binary data as i64.
     pub fn as_i64(&self) -> Result<Vec<i64>> {
         if self.def.dtype != TensorDataType::Int64 {
-            return Err(AppError::Model(format!(
+            return Err(AppError::Asr(AsrError::ModelInference(ModelError::Inference(format!(
                 "Cannot parse tensor '{}' as i64, its type is {:?}",
                 self.def.name, self.def.dtype
-            )));
+            )))));
         }
 
         let vec_len = self.data.len() / 8;
@@ -281,10 +281,10 @@ impl RawTensor {
         for i in 0..vec_len {
             let offset = i * 8;
             let chunk: [u8; 8] = self.data[offset..offset + 8].try_into().map_err(|_| {
-                AppError::Model(format!(
+                AppError::Asr(AsrError::ModelInference(ModelError::Inference(format!(
                     "Failed to read i64 from tensor '{}'",
                     self.def.name
-                ))
+                ))))
             })?;
             result.push(i64::from_le_bytes(chunk));
         }
@@ -298,7 +298,7 @@ impl RawTensor {
         values
             .first()
             .copied()
-            .ok_or_else(|| AppError::Model(format!("Tensor '{}' is empty", self.def.name)))
+            .ok_or_else(|| AppError::Asr(AsrError::ModelInference(ModelError::Inference(format!("Tensor '{}' is empty", self.def.name)))))
     }
 
     /// Get a single f32 value from the tensor.
@@ -307,7 +307,7 @@ impl RawTensor {
         values
             .first()
             .copied()
-            .ok_or_else(|| AppError::Model(format!("Tensor '{}' is empty", self.def.name)))
+            .ok_or_else(|| AppError::Asr(AsrError::ModelInference(ModelError::Inference(format!("Tensor '{}' is empty", self.def.name)))))
     }
 }
 
@@ -324,9 +324,9 @@ pub fn parse_raw_tensors(
     expected_tensors: &HashMap<String, TensorDef>,
 ) -> Result<HashMap<String, RawTensor>> {
     if response.raw_output_contents.is_empty() {
-        return Err(AppError::Model(
+        return Err(AppError::Asr(AsrError::ModelInference(ModelError::Inference(
             "Response does not contain raw tensor data".to_string(),
-        ));
+        ))));
     }
 
     let mut result = HashMap::new();
@@ -354,10 +354,10 @@ pub fn parse_raw_tensors(
                 "UINT8" => TensorDataType::UInt8,
                 "BOOL" => TensorDataType::Bool,
                 _ => {
-                    return Err(AppError::Model(format!(
+                    return Err(AppError::Asr(AsrError::ModelInference(ModelError::Inference(format!(
                         "Unsupported tensor datatype: {}",
                         output_tensor.datatype
-                    )));
+                    )))));
                 }
             }
         };
@@ -376,23 +376,23 @@ pub fn parse_raw_tensors(
     // Now, extract each tensor's data from the raw buffer
     for (name, (index, byte_size, tensor_def)) in tensor_indices {
         if index >= response.raw_output_contents.len() {
-            return Err(AppError::Model(format!(
+            return Err(AppError::Asr(AsrError::ModelInference(ModelError::Inference(format!(
                 "Tensor '{}' index out of bounds: {} >= {}",
                 name,
                 index,
                 response.raw_output_contents.len()
-            )));
+            )))));
         }
 
         let data = Bytes::from(response.raw_output_contents[index].clone());
 
         if data.len() != byte_size {
-            return Err(AppError::Model(format!(
+            return Err(AppError::Asr(AsrError::ModelInference(ModelError::Inference(format!(
                 "Tensor '{}' size mismatch: expected {} bytes, got {}",
                 name,
                 byte_size,
                 data.len()
-            )));
+            )))));
         }
 
         result.insert(

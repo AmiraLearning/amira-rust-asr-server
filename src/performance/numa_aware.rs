@@ -107,6 +107,7 @@ impl NumaTopology {
     }
     
     /// Parse CPU list format (e.g., "0-3,8-11" -> [0,1,2,3,8,9,10,11])
+    #[allow(dead_code)]
     fn parse_cpu_list(cpulist: &str) -> Vec<usize> {
         let mut cpus = Vec::new();
         

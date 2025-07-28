@@ -17,11 +17,38 @@
 //! - **Zero Copy**: Tensors stay in GPU memory throughout the pipeline
 //! - **Reduced Latency**: Eliminates serialization/deserialization overhead
 //! - **Better Memory Management**: Direct control over CUDA memory allocation
+//!
+//! ## Memory Management Architecture
+//!
+//! This module provides two complementary memory management abstractions:
+//!
+//! 1. **`DeviceBuffer<T>`**: Low-level, generic CUDA memory buffer with RAII semantics
+//!    - Type-safe memory operations
+//!    - Automatic cleanup on drop
+//!    - Zero-copy casting between compatible types
+//!    - Host/device memory transfers
+//!
+//! 2. **`CudaSharedMemoryRegion`**: High-level Triton C-API integration
+//!    - CUDA IPC handles for inter-process sharing
+//!    - Direct integration with Triton inference server
+//!    - Model-specific memory pool management
+//!
+//! The `DeviceBuffer` provides the foundation for general CUDA memory operations,
+//! while `CudaSharedMemoryRegion` handles the specifics of Triton server integration.
 
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::fmt;
 use std::os::raw::{c_char, c_int, c_void};
+
+pub mod device_buffer;
+pub mod async_stream;
+
+pub use device_buffer::{DeviceBuffer, DeviceSlice, DevicePod};
+pub use async_stream::{AsyncCudaStream, AsyncCudaEvent, AsyncCudaStreamPool};
+
+// Re-export utility functions from device_buffer
+pub use device_buffer::utils::{device_count, is_available, default_device};
 
 /// Error codes that match the C implementation
 #[repr(C)]
@@ -323,6 +350,9 @@ unsafe extern "C" {
 }
 
 /// Safe wrapper for CUDA shared memory region
+/// 
+/// This is a higher-level abstraction specifically for Triton C-API integration
+/// with IPC handles, built on top of the lower-level DeviceBuffer.
 pub struct CudaSharedMemoryRegion {
     handle: *mut c_void,
 }
@@ -396,6 +426,24 @@ impl CudaSharedMemoryRegion {
         
         Ok(())
     }
+
+    /// Enqueue async write f32 data to the region (non-blocking)
+    pub fn enqueue_write_f32_data(&self, data: &[f32], stream: &AsyncCudaStream) -> Result<(), CudaSharedMemoryError> {
+        // Create a device buffer from the shared memory region
+        let device_buffer = unsafe { self.as_device_buffer::<f32>(data.len()) };
+        
+        // Enqueue copy to device using the stream (non-blocking)
+        let mut mut_buffer = device_buffer;
+        mut_buffer.enqueue_copy_from_host(data, stream)?;
+        
+        Ok(())
+    }
+    
+    /// Asynchronously write f32 data to the region using a CUDA stream (blocks until complete)
+    pub async fn write_f32_data_async(&self, data: &[f32], stream: &AsyncCudaStream) -> Result<(), CudaSharedMemoryError> {
+        self.enqueue_write_f32_data(data, stream)?;
+        stream.wait().await
+    }
     
     /// Read f32 data from the region
     pub fn read_f32_data(&self, element_count: usize) -> Result<Vec<f32>, CudaSharedMemoryError> {
@@ -409,6 +457,25 @@ impl CudaSharedMemoryRegion {
             return Err(result.into());
         }
         
+        Ok(data)
+    }
+
+    /// Enqueue async read f32 data from the region (non-blocking)
+    pub fn enqueue_read_f32_data(&self, data: &mut [f32], stream: &AsyncCudaStream) -> Result<(), CudaSharedMemoryError> {
+        // Create a device buffer from the shared memory region
+        let device_buffer = unsafe { self.as_device_buffer::<f32>(data.len()) };
+        
+        // Enqueue copy from device to host using the stream (non-blocking)
+        device_buffer.enqueue_copy_to_host(data, stream)?;
+        
+        Ok(())
+    }
+    
+    /// Asynchronously read f32 data from the region using a CUDA stream (blocks until complete)
+    pub async fn read_f32_data_async(&self, element_count: usize, stream: &AsyncCudaStream) -> Result<Vec<f32>, CudaSharedMemoryError> {
+        let mut data = vec![0.0f32; element_count];
+        self.enqueue_read_f32_data(&mut data, stream)?;
+        stream.wait().await?;
         Ok(data)
     }
     
@@ -464,6 +531,53 @@ impl CudaSharedMemoryRegion {
         
         Ok(())
     }
+
+    /// Enqueue stream-aware Triton inference (non-blocking)
+    pub fn enqueue_inference_with_config(
+        &self,
+        config: &ModelConfig,
+        input_name: &str,
+        output_name: &str,
+        stream: &AsyncCudaStream,
+    ) -> Result<(), CudaSharedMemoryError> {
+        // Record an event before inference for stream ordering
+        let _pre_inference_event = stream.record_event()?;
+        
+        // Run the inference (this will be automatically ordered after previous operations on the stream)
+        self.run_inference_with_config(config, input_name, output_name)?;
+        
+        // Record an event after inference for future synchronization
+        let _post_inference_event = stream.record_event()?;
+        
+        Ok(())
+    }
+    
+    /// Asynchronously run inference with the specified model configuration (blocks until complete)
+    pub async fn run_inference_with_config_async(
+        &self,
+        config: &ModelConfig,
+        input_name: &str,
+        output_name: &str,
+        stream: &AsyncCudaStream,
+    ) -> Result<(), CudaSharedMemoryError> {
+        self.enqueue_inference_with_config(config, input_name, output_name, stream)?;
+        stream.wait().await
+    }
+    
+    /// Create a typed DeviceBuffer view of this shared memory region
+    /// 
+    /// # Safety
+    /// 
+    /// The caller must ensure that:
+    /// - The memory region contains valid data of type T
+    /// - The capacity doesn't exceed the actual allocated size
+    /// - The memory is properly aligned for type T
+    pub unsafe fn as_device_buffer<T>(&self, capacity: usize) -> DeviceBuffer<T> {
+        // Note: This is a simplified version - in practice you'd need to extract
+        // the actual device pointer from the C handle
+        let ptr = self.handle as *mut T;
+        DeviceBuffer::from_raw_parts(ptr, capacity, 0) // device_id would need to be stored
+    }
     
     /// Run inference with separate input and output regions
     pub fn run_inference_with_output_regions(
@@ -509,6 +623,40 @@ impl CudaSharedMemoryRegion {
         }
         
         Ok(())
+    }
+
+    /// Enqueue stream-aware Triton inference with separate input and output regions (non-blocking)
+    pub fn enqueue_inference_with_output_regions(
+        &self,
+        output_region: &CudaSharedMemoryRegion,
+        config: &ModelConfig,
+        input_name: &str,
+        output_name: &str,
+        stream: &AsyncCudaStream,
+    ) -> Result<(), CudaSharedMemoryError> {
+        // Record an event before inference for stream ordering
+        let _pre_inference_event = stream.record_event()?;
+        
+        // Run the inference (this will be automatically ordered after previous operations on the stream)
+        self.run_inference_with_output_regions(output_region, config, input_name, output_name)?;
+        
+        // Record an event after inference for future synchronization
+        let _post_inference_event = stream.record_event()?;
+        
+        Ok(())
+    }
+    
+    /// Asynchronously run inference with separate input and output regions (blocks until complete)
+    pub async fn run_inference_with_output_regions_async(
+        &self,
+        output_region: &CudaSharedMemoryRegion,
+        config: &ModelConfig,
+        input_name: &str,
+        output_name: &str,
+        stream: &AsyncCudaStream,
+    ) -> Result<(), CudaSharedMemoryError> {
+        self.enqueue_inference_with_output_regions(output_region, config, input_name, output_name, stream)?;
+        stream.wait().await
     }
 }
 

@@ -5,8 +5,8 @@
 
 use crate::asr::types::DecoderState;
 use crate::asr::zero_copy::{argmax_zero_copy, with_decoder_workspace, TensorView};
-use crate::config::model::{BLANK_TOKEN_ID, MAX_SYMBOLS_PER_STEP, MAX_TOTAL_TOKENS};
-use crate::error::{AppError, Result};
+use crate::constants::triton::{BLANK_TOKEN_ID, MAX_SYMBOLS_PER_STEP, MAX_TOTAL_TOKENS};
+use crate::error::{AppError, AsrError, ModelError, Result};
 use std::future::Future;
 use tracing::{debug, warn};
 
@@ -62,9 +62,9 @@ where
     Fut: Future<Output = Result<(Vec<f32>, DecoderState)>>,
 {
     if encoder_shape.len() != 3 {
-        return Err(AppError::Model(
+        return Err(AppError::Asr(AsrError::ModelInference(ModelError::Inference(
             "Encoder output must be 3D tensor [batch, features, time_steps]".to_string(),
-        ));
+        ))));
     }
 
     let [_batch, features, time_steps] = [encoder_shape[0], encoder_shape[1], encoder_shape[2]];
@@ -116,10 +116,10 @@ where
         let encoder_frame = match encoder_frame {
             Some(frame) => frame,
             None => {
-                return Err(AppError::Model(format!(
+                return Err(AppError::Asr(AsrError::ModelInference(ModelError::Inference(format!(
                     "Failed to extract encoder frame for time step {}",
                     t
-                )));
+                )))));
             }
         };
 
@@ -141,7 +141,7 @@ where
             let (logits, new_state) =
                 decode_step_fn(&encoder_frame, &current_targets, decoder_state)
                     .await
-                    .map_err(|_e| AppError::Model("Decode step failed".to_string()))?;
+                    .map_err(|_e| AppError::Asr(AsrError::ModelInference(ModelError::Inference("Decode step failed".to_string()))))?;
 
             decoder_state = new_state;
 
@@ -206,9 +206,9 @@ where
     Fut: Future<Output = Result<(Vec<f32>, DecoderState)>>,
 {
     if encoder_shape.len() != 3 {
-        return Err(AppError::Model(
+        return Err(AppError::Asr(AsrError::ModelInference(ModelError::Inference(
             "Encoder output must be 3D tensor [batch, features, time_steps]".to_string(),
-        ));
+        ))));
     }
 
     let [_batch, features, time_steps] = [encoder_shape[0], encoder_shape[1], encoder_shape[2]];
@@ -238,10 +238,10 @@ where
         // Zero-copy frame extraction
         let features_copied = encoder_tensor.extract_frame_into(t, &mut encoder_frame);
         if features_copied != features {
-            return Err(AppError::Model(format!(
+            return Err(AppError::Asr(AsrError::ModelInference(ModelError::Inference(format!(
                 "Failed to extract encoder frame for time step {}",
                 t
-            )));
+            )))));
         }
 
         if t < 3 {

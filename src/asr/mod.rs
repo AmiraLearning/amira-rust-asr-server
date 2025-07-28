@@ -131,6 +131,7 @@
 //! ```
 
 mod audio;
+pub mod builder;
 mod decoder_optimized;
 mod incremental;
 mod lockfree_memory;
@@ -138,6 +139,7 @@ mod pipeline;
 #[cfg(feature = "cuda")]
 mod cuda_pipeline;
 pub mod simd;
+pub mod traits;
 pub mod types;
 mod weaving;
 mod zero_copy;
@@ -176,7 +178,9 @@ pub mod decoder {
 pub use pipeline::{AsrPipeline, TritonAsrPipeline};
 #[cfg(feature = "cuda")]
 pub use cuda_pipeline::{CudaAsrPipeline, CudaAsrPipelineBuilder};
-pub use types::{AccumulatedPredictions, DecoderState, SeqSlice, Transcription, Vocabulary};
+pub use builder::*;
+pub use types::{AccumulatedPredictions, SeqSlice, Vocabulary};
+pub use traits::*;
 pub use zero_copy::{argmax_zero_copy, with_decoder_workspace, DecoderWorkspace, TensorView};
 pub use simd::{
     // Audio processing functions

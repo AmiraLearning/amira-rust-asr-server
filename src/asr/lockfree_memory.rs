@@ -7,7 +7,7 @@
 use crossbeam::queue::SegQueue;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use crate::error::{AppError, Result};
-use crate::config::{memory as config, audio, model};
+use crate::constants::{performance as config, audio, model, triton};
 
 use tracing::error;
 
@@ -251,7 +251,7 @@ impl LockFreeAsrMemoryPools {
     pub fn new() -> Self {
         Self {
             audio_buffers: LockFreeObjectPool::new(
-                || Vec::with_capacity(audio::SAMPLE_RATE as usize * config::AUDIO_BUFFER_SECONDS),
+                || Vec::with_capacity(audio::SAMPLE_RATE.value() as usize * config::AUDIO_BUFFER_SECONDS),
                 config::AUDIO_BUFFER_POOL_SIZE,
                 config::AUDIO_BUFFER_PRE_ALLOC,
             ),
@@ -281,7 +281,7 @@ impl LockFreeAsrMemoryPools {
             ),
             
             logits: LockFreeObjectPool::new(
-                || Vec::with_capacity(model::VOCABULARY_SIZE),
+                || Vec::with_capacity(triton::VOCABULARY_SIZE),
                 config::DECODER_POOL_SIZE,
                 config::DECODER_PRE_ALLOC,
             ),

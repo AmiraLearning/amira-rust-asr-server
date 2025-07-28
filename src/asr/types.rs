@@ -3,7 +3,7 @@
 //! This module defines the fundamental data structures used throughout the ASR pipeline,
 //! including vocabulary management, decoder state tracking, and transcription results.
 
-use crate::config::model::DECODER_STATE_SIZE;
+use crate::constants::model::DECODER_STATE_SIZE;
 use crate::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -146,6 +146,11 @@ impl Vocabulary {
     /// Check if the vocabulary is empty.
     pub fn is_empty(&self) -> bool {
         self.id_to_token.is_empty()
+    }
+
+    /// Create a vocabulary from a HashMap (for testing).
+    pub fn from_map(id_to_token: HashMap<i32, String>) -> Self {
+        Self { id_to_token }
     }
 }
 

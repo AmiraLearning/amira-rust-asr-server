@@ -41,6 +41,7 @@ pub struct NumaManager {
     /// Cloud environment information
     cloud_info: Option<CloudInstanceInfo>,
     /// Platform information
+    #[allow(dead_code)]
     platform_info: PlatformInfo,
 }
 

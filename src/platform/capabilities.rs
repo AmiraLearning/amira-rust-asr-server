@@ -1,7 +1,7 @@
 //! Platform capability detection and feature flags.
 
 use std::collections::HashMap;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use super::detection::{PlatformInfo, detect_platform, VirtualizationEnvironment, OperatingSystem};
 

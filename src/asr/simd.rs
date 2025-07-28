@@ -12,7 +12,7 @@
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 
-use crate::error::{AppError, Result};
+use crate::error::{AppError, AsrError, AudioError, Result};
 
 // ============================================================================
 // ALIGNED BUFFER UTILITIES
@@ -23,6 +23,7 @@ use crate::error::{AppError, Result};
 #[derive(Debug)]
 pub struct AlignedBuffer {
     data: Vec<f32>,
+    #[allow(dead_code)]
     alignment: usize,
 }
 
@@ -817,11 +818,11 @@ unsafe fn smooth_audio_avx2(input: &[f32], output: &mut [f32], window_size: usiz
 /// Public interface for optimized audio smoothing.
 pub fn smooth_audio_optimized(input: &[f32], output: &mut [f32], window_size: usize) -> Result<()> {
     if input.len() != output.len() {
-        return Err(AppError::Audio(format!(
+        return Err(AppError::Asr(AsrError::AudioProcessing(AudioError::InvalidFormat(format!(
             "Input and output slices must have the same length: {} != {}",
             input.len(),
             output.len()
-        )));
+        )))));
     }
 
     #[cfg(target_arch = "x86_64")]

@@ -18,8 +18,8 @@ use tracing::{error, info};
 
 use crate::asr::types::{AsrResponse, StreamStatus};
 use crate::asr::AsrPipeline;
-use crate::config::audio::{MAX_BATCH_AUDIO_LENGTH_SECS, SAMPLE_RATE};
-use crate::error::{AppError, Result};
+use crate::constants::audio::{MAX_BATCH_AUDIO_LENGTH_SECS, SAMPLE_RATE};
+use crate::error::{AppError, ServerError, Result};
 use crate::server::stream::create_stream;
 use crate::server::AppState;
 
@@ -69,45 +69,45 @@ impl BatchRequest {
     pub fn validate(&self) -> Result<()> {
         // Check audio buffer size
         if self.audio_buffer.is_empty() {
-            return Err(AppError::Validation(
+            return Err(AppError::Server(ServerError::RequestValidation(
                 "Audio buffer cannot be empty".to_string(),
-            ));
+            )));
         }
 
         // Check if audio buffer length is even (16-bit samples)
         if self.audio_buffer.len() % 2 != 0 {
-            return Err(AppError::Validation(
+            return Err(AppError::Server(ServerError::RequestValidation(
                 "Audio buffer length must be even for 16-bit PCM".to_string(),
-            ));
+            )));
         }
 
         // Check maximum size (prevent DoS)
         const MAX_AUDIO_BYTES: usize = 100 * 1024 * 1024; // 100MB
         if self.audio_buffer.len() > MAX_AUDIO_BYTES {
-            return Err(AppError::Validation(format!(
+            return Err(AppError::Server(ServerError::RequestValidation(format!(
                 "Audio buffer too large: {} bytes (max: {} bytes)",
                 self.audio_buffer.len(),
                 MAX_AUDIO_BYTES
-            )));
+            ))));
         }
 
         // Validate audio length in seconds
-        let audio_length_secs = self.audio_buffer.len() as f32 / (SAMPLE_RATE as f32 * 2.0);
-        if audio_length_secs > MAX_BATCH_AUDIO_LENGTH_SECS {
-            return Err(AppError::Validation(format!(
+        let audio_length_secs = self.audio_buffer.len() as f32 / (SAMPLE_RATE.as_f32() * 2.0);
+        if audio_length_secs > MAX_BATCH_AUDIO_LENGTH_SECS as f32 {
+            return Err(AppError::Server(ServerError::RequestValidation(format!(
                 "Audio too long: {:.1}s (max: {}s)",
                 audio_length_secs, MAX_BATCH_AUDIO_LENGTH_SECS
-            )));
+            ))));
         }
 
         // Validate opaque data size if present
         if let Some(ref opaque) = self.opaque {
             let opaque_str = serde_json::to_string(opaque)
-                .map_err(|_| AppError::Validation("Invalid opaque data format".to_string()))?;
+                .map_err(|_| AppError::Server(ServerError::RequestValidation("Invalid opaque data format".to_string())))?;
             if opaque_str.len() > 10_000 {
-                return Err(AppError::Validation(
+                return Err(AppError::Server(ServerError::RequestValidation(
                     "Opaque data too large (max: 10KB)".to_string(),
-                ));
+                )));
             }
         }
 

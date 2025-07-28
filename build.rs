@@ -11,13 +11,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("cargo:rerun-if-changed=src/cuda/cuda_helper.cu");
         println!("cargo:rerun-if-changed=build.rs");
         
-        // Set up CUDA and Triton library paths
-        let triton_lib_path = std::env::var("TRITON_LIB_PATH")
-            .unwrap_or_else(|_| "/opt/tritonserver/lib".to_string());
-        let triton_include_path = std::env::var("TRITON_INCLUDE_PATH")
-            .unwrap_or_else(|_| "/opt/tritonserver/include".to_string());
+        // Use the triton installation from our setup script
+        let install_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
+        let third_party_path = std::path::Path::new(&install_dir).join("third_party");
+
+        let triton_lib_path = third_party_path.join("tritonserver/lib");
+        let triton_include_path = third_party_path.join("tritonserver/include");
         
-        println!("cargo:rustc-link-search=native={}", triton_lib_path);
+        if !triton_lib_path.exists() || !triton_include_path.exists() {
+            panic!(
+                "Triton library/include path not found. Did you run 'setup_dependencies.sh'? Expected: {} and {}",
+                triton_lib_path.display(),
+                triton_include_path.display()
+            );
+        }
+        
+        println!("cargo:rustc-link-search=native={}", triton_lib_path.display());
         println!("cargo:rustc-link-lib=tritonserver");
         
         // Use nvcc to compile CUDA code
@@ -38,7 +47,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "--compiler-options",
                     "-fPIC",
                     "-I",
-                    &triton_include_path,
+                    &triton_include_path.to_string_lossy(),
                     "-std=c++17",
                 ])
                 .output()

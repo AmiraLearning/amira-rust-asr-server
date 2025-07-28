@@ -36,7 +36,7 @@ impl From<TritonClientError> for AppError {
             TritonClientError::ConnectionError(e) => {
                 AppError::Internal(format!("Triton connection error: {}", e))
             }
-            TritonClientError::InferenceError(e) => AppError::TritonInference(e),
+            TritonClientError::InferenceError(e) => AppError::TritonInference(e.to_string()),
         }
     }
 }
@@ -76,7 +76,7 @@ impl TritonClient {
             .client
             .model_infer(request)
             .await
-            .map_err(AppError::TritonInference)?;
+            .map_err(|e| AppError::TritonInference(e.to_string()))?;
 
         Ok(response.into_inner())
     }

@@ -11,7 +11,7 @@ use tracing::{debug, info};
 use crate::asr::pipeline::AsrPipeline;
 use crate::asr::types::{DecoderState, Transcription, Vocabulary};
 use crate::cuda::{
-    CudaSharedMemoryPool, ModelConfig,
+    CudaSharedMemoryPool, ModelConfig, AsyncCudaStream, AsyncCudaStreamPool,
 };
 use crate::error::{AppError, Result};
 
@@ -33,6 +33,9 @@ pub struct CudaAsrPipeline {
     
     /// Window size for audio chunks
     window_size: usize,
+    
+    /// Async CUDA stream pool for overlapping operations
+    stream_pool: AsyncCudaStreamPool,
 }
 
 impl CudaAsrPipeline {
@@ -63,6 +66,10 @@ impl CudaAsrPipeline {
         // Register all regions with Triton server
         Self::register_pools_with_triton(&preprocessor_pool, &encoder_pool, &decoder_joint_pool)?;
         
+        // Create async CUDA stream pool for overlapping operations
+        let stream_pool = AsyncCudaStreamPool::new(device_id, 3) // 3 streams: preprocessor, encoder, decoder
+            .map_err(|e| AppError::CudaError(format!("Failed to create stream pool: {}", e)))?;
+        
         info!("CUDA ASR pipeline initialized successfully");
         
         Ok(Self {
@@ -73,6 +80,7 @@ impl CudaAsrPipeline {
             decoder_joint_pool,
             sample_rate,
             window_size,
+            stream_pool,
         })
     }
     
@@ -134,9 +142,13 @@ impl CudaAsrPipeline {
         Ok(samples)
     }
     
-    /// Run preprocessing step
+    /// Run preprocessing step with async CUDA streams
     async fn run_preprocessor(&self, audio_samples: &[f32]) -> Result<Vec<f32>> {
         debug!("Running preprocessor with {} samples", audio_samples.len());
+        
+        // Get dedicated stream for preprocessor operations
+        let stream = self.stream_pool.get_stream(0)
+            .ok_or_else(|| AppError::CudaError("Failed to get preprocessor stream".to_string()))?;
         
         // Get input and output regions
         let input_region = self.preprocessor_pool.get_input_region("AUDIO_FRAMES")
@@ -145,33 +157,43 @@ impl CudaAsrPipeline {
         let output_region = self.preprocessor_pool.get_output_region("MEL_FEATURES")
             .ok_or_else(|| AppError::CudaError("Missing preprocessor output region".to_string()))?;
         
-        // Write input data to CUDA memory
-        input_region.write_f32_data(audio_samples)
-            .map_err(|e| AppError::CudaError(format!("Failed to write preprocessor input: {}", e)))?;
+        // Enqueue input data write to CUDA memory (non-blocking)
+        input_region.enqueue_write_f32_data(audio_samples, &stream)
+            .map_err(|e| AppError::CudaError(format!("Failed to enqueue preprocessor input: {}", e)))?;
         
-        // Run inference
-        input_region.run_inference_with_output_regions(
+        // Enqueue inference (non-blocking, automatically ordered after write)
+        input_region.enqueue_inference_with_output_regions(
             output_region,
             &self.preprocessor_pool.config,
             "AUDIO_FRAMES",
             "MEL_FEATURES",
-        ).map_err(|e| AppError::CudaError(format!("Preprocessor inference failed: {}", e)))?;
+            &stream,
+        ).map_err(|e| AppError::CudaError(format!("Failed to enqueue preprocessor inference: {}", e)))?;
         
         // Read output data
         let output_size = self.preprocessor_pool.config.calculate_output_buffer_size("MEL_FEATURES")
             .ok_or_else(|| AppError::CudaError("Failed to calculate output buffer size".to_string()))?;
         
+        // Enqueue output data read (non-blocking, automatically ordered after inference)
         let output_elements = output_size / 4; // f32 is 4 bytes
-        let mel_features = output_region.read_f32_data(output_elements)
-            .map_err(|e| AppError::CudaError(format!("Failed to read preprocessor output: {}", e)))?;
+        let mut mel_features = vec![0.0f32; output_elements];
+        output_region.enqueue_read_f32_data(&mut mel_features, &stream)
+            .map_err(|e| AppError::CudaError(format!("Failed to enqueue preprocessor output read: {}", e)))?;
+        
+        // Only wait when we need the results on the host
+        stream.wait().await.map_err(|e| AppError::CudaError(format!("Failed to wait for preprocessor completion: {}", e)))?;
         
         debug!("Preprocessor completed, output size: {}", mel_features.len());
         Ok(mel_features)
     }
     
-    /// Run encoder step
+    /// Run encoder step with async CUDA streams
     async fn run_encoder(&self, mel_features: &[f32], encoder_state: &mut Vec<f32>) -> Result<(Vec<f32>, Vec<f32>)> {
         debug!("Running encoder with {} mel features", mel_features.len());
+        
+        // Get dedicated stream for encoder operations
+        let stream = self.stream_pool.get_stream(1)
+            .ok_or_else(|| AppError::CudaError("Failed to get encoder stream".to_string()))?;
         
         // Get input and output regions
         let mel_input_region = self.encoder_pool.get_input_region("MEL_FEATURES")
@@ -186,20 +208,21 @@ impl CudaAsrPipeline {
         let state_output_region = self.encoder_pool.get_output_region("UPDATED_ENCODER_STATE")
             .ok_or_else(|| AppError::CudaError("Missing encoder UPDATED_ENCODER_STATE output region".to_string()))?;
         
-        // Write input data to CUDA memory
-        mel_input_region.write_f32_data(mel_features)
-            .map_err(|e| AppError::CudaError(format!("Failed to write encoder mel features: {}", e)))?;
+        // Enqueue input data writes to CUDA memory (non-blocking, can overlap)
+        mel_input_region.enqueue_write_f32_data(mel_features, &stream)
+            .map_err(|e| AppError::CudaError(format!("Failed to enqueue encoder mel features: {}", e)))?;
         
-        state_input_region.write_f32_data(encoder_state)
-            .map_err(|e| AppError::CudaError(format!("Failed to write encoder state: {}", e)))?;
+        state_input_region.enqueue_write_f32_data(encoder_state, &stream)
+            .map_err(|e| AppError::CudaError(format!("Failed to enqueue encoder state: {}", e)))?;
         
-        // Run inference with separate input/output regions
-        mel_input_region.run_inference_with_output_regions(
+        // Enqueue inference (non-blocking, automatically ordered after both writes)
+        mel_input_region.enqueue_inference_with_output_regions(
             output_region,
             &self.encoder_pool.config,
             "MEL_FEATURES",
             "ENCODER_OUTPUT",
-        ).map_err(|e| AppError::CudaError(format!("Encoder inference failed: {}", e)))?;
+            &stream,
+        ).map_err(|e| AppError::CudaError(format!("Failed to enqueue encoder inference: {}", e)))?;
         
         // Read output data
         let output_size = self.encoder_pool.config.calculate_output_buffer_size("ENCODER_OUTPUT")
@@ -208,11 +231,18 @@ impl CudaAsrPipeline {
         let state_size = self.encoder_pool.config.calculate_output_buffer_size("UPDATED_ENCODER_STATE")
             .ok_or_else(|| AppError::CudaError("Failed to calculate encoder state buffer size".to_string()))?;
         
-        let encoder_output = output_region.read_f32_data(output_size / 4)
-            .map_err(|e| AppError::CudaError(format!("Failed to read encoder output: {}", e)))?;
+        // Enqueue output data reads (non-blocking, automatically ordered after inference)
+        let mut encoder_output = vec![0.0f32; output_size / 4];
+        let mut updated_encoder_state = vec![0.0f32; state_size / 4];
         
-        let updated_encoder_state = state_output_region.read_f32_data(state_size / 4)
-            .map_err(|e| AppError::CudaError(format!("Failed to read encoder state: {}", e)))?;
+        output_region.enqueue_read_f32_data(&mut encoder_output, &stream)
+            .map_err(|e| AppError::CudaError(format!("Failed to enqueue encoder output read: {}", e)))?;
+        
+        state_output_region.enqueue_read_f32_data(&mut updated_encoder_state, &stream)
+            .map_err(|e| AppError::CudaError(format!("Failed to enqueue encoder state read: {}", e)))?;
+        
+        // Only wait when we need the results on the host
+        stream.wait().await.map_err(|e| AppError::CudaError(format!("Failed to wait for encoder completion: {}", e)))?;
         
         // Update the encoder state
         *encoder_state = updated_encoder_state.clone();

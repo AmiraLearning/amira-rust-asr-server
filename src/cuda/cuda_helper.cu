@@ -626,6 +626,224 @@ extern "C" CudaError RunTritonInferenceWithConfig(
     }
 }
 
+// Device buffer FFI functions
+extern "C" void* cuda_malloc_device(size_t size, int device_id) {
+    cudaError_t err = cudaSetDevice(device_id);
+    if (err != cudaSuccess) {
+        printf("Failed to set device %d: %s\n", device_id, cudaGetErrorString(err));
+        return nullptr;
+    }
+    
+    void* ptr = nullptr;
+    err = cudaMalloc(&ptr, size);
+    if (err != cudaSuccess) {
+        printf("Failed to allocate %zu bytes on device %d: %s\n", size, device_id, cudaGetErrorString(err));
+        return nullptr;
+    }
+    
+    return ptr;
+}
+
+extern "C" CudaError cuda_free_device(void* ptr, int device_id) {
+    if (!ptr) {
+        return CUDA_SUCCESS;
+    }
+    
+    cudaError_t err = cudaSetDevice(device_id);
+    if (err != cudaSuccess) {
+        printf("Failed to set device %d: %s\n", device_id, cudaGetErrorString(err));
+        return CUDA_ERROR_UNKNOWN;
+    }
+    
+    err = cudaFree(ptr);
+    if (err != cudaSuccess) {
+        printf("Failed to free device memory: %s\n", cudaGetErrorString(err));
+        return CUDA_ERROR_UNKNOWN;
+    }
+    
+    return CUDA_SUCCESS;
+}
+
+extern "C" CudaError cuda_memcpy_h2d(void* dst, const void* src, size_t size) {
+    cudaError_t err = cudaMemcpy(dst, src, size, cudaMemcpyHostToDevice);
+    if (err != cudaSuccess) {
+        printf("Failed to copy %zu bytes from host to device: %s\n", size, cudaGetErrorString(err));
+        return CUDA_ERROR_UNKNOWN;
+    }
+    return CUDA_SUCCESS;
+}
+
+extern "C" CudaError cuda_memcpy_d2h(void* dst, const void* src, size_t size) {
+    cudaError_t err = cudaMemcpy(dst, src, size, cudaMemcpyDeviceToHost);
+    if (err != cudaSuccess) {
+        printf("Failed to copy %zu bytes from device to host: %s\n", size, cudaGetErrorString(err));
+        return CUDA_ERROR_UNKNOWN;
+    }
+    return CUDA_SUCCESS;
+}
+
+extern "C" CudaError cuda_memcpy_d2d(void* dst, const void* src, size_t size) {
+    cudaError_t err = cudaMemcpy(dst, src, size, cudaMemcpyDeviceToDevice);
+    if (err != cudaSuccess) {
+        printf("Failed to copy %zu bytes from device to device: %s\n", size, cudaGetErrorString(err));
+        return CUDA_ERROR_UNKNOWN;
+    }
+    return CUDA_SUCCESS;
+}
+
+extern "C" CudaError cuda_memset_device(void* ptr, int value, size_t size) {
+    cudaError_t err = cudaMemset(ptr, value, size);
+    if (err != cudaSuccess) {
+        printf("Failed to set %zu bytes of device memory: %s\n", size, cudaGetErrorString(err));
+        return CUDA_ERROR_UNKNOWN;
+    }
+    return CUDA_SUCCESS;
+}
+
+extern "C" int cuda_get_device_count() {
+    int count = 0;
+    cudaError_t err = cudaGetDeviceCount(&count);
+    if (err != cudaSuccess) {
+        printf("Failed to get device count: %s\n", cudaGetErrorString(err));
+        return 0;
+    }
+    return count;
+}
+
+// Async CUDA stream functions
+extern "C" CudaError cuda_stream_create(cudaStream_t* stream) {
+    cudaError_t err = cudaStreamCreate(stream);
+    if (err != cudaSuccess) {
+        printf("Failed to create CUDA stream: %s\n", cudaGetErrorString(err));
+        return CUDA_ERROR_UNKNOWN;
+    }
+    return CUDA_SUCCESS;
+}
+
+extern "C" CudaError cuda_stream_destroy(cudaStream_t stream) {
+    if (stream == nullptr) {
+        return CUDA_SUCCESS;
+    }
+    
+    cudaError_t err = cudaStreamDestroy(stream);
+    if (err != cudaSuccess) {
+        printf("Failed to destroy CUDA stream: %s\n", cudaGetErrorString(err));
+        return CUDA_ERROR_UNKNOWN;
+    }
+    return CUDA_SUCCESS;
+}
+
+extern "C" CudaError cuda_stream_synchronize(cudaStream_t stream) {
+    cudaError_t err = cudaStreamSynchronize(stream);
+    if (err != cudaSuccess) {
+        printf("Failed to synchronize CUDA stream: %s\n", cudaGetErrorString(err));
+        return CUDA_ERROR_UNKNOWN;
+    }
+    return CUDA_SUCCESS;
+}
+
+extern "C" CudaError cuda_stream_query(cudaStream_t stream) {
+    cudaError_t err = cudaStreamQuery(stream);
+    if (err == cudaSuccess) {
+        return CUDA_SUCCESS;
+    } else if (err == cudaErrorNotReady) {
+        return CUDA_ERROR_UNKNOWN; // Use this to indicate "not ready"
+    } else {
+        printf("Failed to query CUDA stream: %s\n", cudaGetErrorString(err));
+        return CUDA_ERROR_UNKNOWN;
+    }
+}
+
+// Async CUDA event functions
+extern "C" CudaError cuda_event_create(cudaEvent_t* event) {
+    cudaError_t err = cudaEventCreate(event);
+    if (err != cudaSuccess) {
+        printf("Failed to create CUDA event: %s\n", cudaGetErrorString(err));
+        return CUDA_ERROR_UNKNOWN;
+    }
+    return CUDA_SUCCESS;
+}
+
+extern "C" CudaError cuda_event_destroy(cudaEvent_t event) {
+    if (event == nullptr) {
+        return CUDA_SUCCESS;
+    }
+    
+    cudaError_t err = cudaEventDestroy(event);
+    if (err != cudaSuccess) {
+        printf("Failed to destroy CUDA event: %s\n", cudaGetErrorString(err));
+        return CUDA_ERROR_UNKNOWN;
+    }
+    return CUDA_SUCCESS;
+}
+
+extern "C" CudaError cuda_event_record(cudaEvent_t event, cudaStream_t stream) {
+    cudaError_t err = cudaEventRecord(event, stream);
+    if (err != cudaSuccess) {
+        printf("Failed to record CUDA event: %s\n", cudaGetErrorString(err));
+        return CUDA_ERROR_UNKNOWN;
+    }
+    return CUDA_SUCCESS;
+}
+
+extern "C" CudaError cuda_event_query(cudaEvent_t event) {
+    cudaError_t err = cudaEventQuery(event);
+    if (err == cudaSuccess) {
+        return CUDA_SUCCESS;
+    } else if (err == cudaErrorNotReady) {
+        return CUDA_ERROR_UNKNOWN; // Use this to indicate "not ready"
+    } else {
+        printf("Failed to query CUDA event: %s\n", cudaGetErrorString(err));
+        return CUDA_ERROR_UNKNOWN;
+    }
+}
+
+extern "C" CudaError cuda_event_synchronize(cudaEvent_t event) {
+    cudaError_t err = cudaEventSynchronize(event);
+    if (err != cudaSuccess) {
+        printf("Failed to synchronize CUDA event: %s\n", cudaGetErrorString(err));
+        return CUDA_ERROR_UNKNOWN;
+    }
+    return CUDA_SUCCESS;
+}
+
+// Async memory transfer functions
+extern "C" CudaError cuda_memcpy_h2d_async(void* dst, const void* src, size_t size, cudaStream_t stream) {
+    cudaError_t err = cudaMemcpyAsync(dst, src, size, cudaMemcpyHostToDevice, stream);
+    if (err != cudaSuccess) {
+        printf("Failed to copy %zu bytes from host to device asynchronously: %s\n", size, cudaGetErrorString(err));
+        return CUDA_ERROR_UNKNOWN;
+    }
+    return CUDA_SUCCESS;
+}
+
+extern "C" CudaError cuda_memcpy_d2h_async(void* dst, const void* src, size_t size, cudaStream_t stream) {
+    cudaError_t err = cudaMemcpyAsync(dst, src, size, cudaMemcpyDeviceToHost, stream);
+    if (err != cudaSuccess) {
+        printf("Failed to copy %zu bytes from device to host asynchronously: %s\n", size, cudaGetErrorString(err));
+        return CUDA_ERROR_UNKNOWN;
+    }
+    return CUDA_SUCCESS;
+}
+
+extern "C" CudaError cuda_memcpy_d2d_async(void* dst, const void* src, size_t size, cudaStream_t stream) {
+    cudaError_t err = cudaMemcpyAsync(dst, src, size, cudaMemcpyDeviceToDevice, stream);
+    if (err != cudaSuccess) {
+        printf("Failed to copy %zu bytes from device to device asynchronously: %s\n", size, cudaGetErrorString(err));
+        return CUDA_ERROR_UNKNOWN;
+    }
+    return CUDA_SUCCESS;
+}
+
+extern "C" CudaError cuda_memset_async(void* ptr, int value, size_t size, cudaStream_t stream) {
+    cudaError_t err = cudaMemsetAsync(ptr, value, size, stream);
+    if (err != cudaSuccess) {
+        printf("Failed to set %zu bytes of device memory asynchronously: %s\n", size, cudaGetErrorString(err));
+        return CUDA_ERROR_UNKNOWN;
+    }
+    return CUDA_SUCCESS;
+}
+
 extern "C" CudaError RunTritonInference(void* handle) {
     printf("Running REAL Triton inference with CUDA shared memory: %p\n", handle);
     
