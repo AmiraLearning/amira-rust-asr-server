@@ -32,11 +32,11 @@ server_debug*.log
 coverage/
 .coverage
 
-# Model artifacts
-*.onnx
-*.pt
-*.pth
-model-repo/
+# Model artifacts (now handled by Git LFS)
+# *.onnx  # Commented out - now tracked by LFS
+# *.pt    # Commented out - now tracked by LFS  
+# *.pth   # Commented out - now tracked by LFS
+# model-repo/  # Commented out - now tracked by LFS
 models/
 
 # Audio files
@@ -57,7 +57,7 @@ temp/
 # Third-party dependencies (use system installations or Docker)
 third_party/
 
-# Large binary model files (should use Git LFS or external storage)
-*.onnx
-*.pt
-*.pth
+# Large binary model files (now tracked with Git LFS)
+# *.onnx  # Commented out - now tracked by LFS
+# *.pt    # Commented out - now tracked by LFS
+# *.pth   # Commented out - now tracked by LFS

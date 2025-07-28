@@ -1,0 +1,124 @@
+name: "asr_ensemble"
+platform: "ensemble"
+
+input [
+  {
+    name: "audio_signal"
+    data_type: TYPE_FP32
+    dims: [-1, 128, -1]  # [batch_size, 128, time_steps]
+  },
+  {
+    name: "length" 
+    data_type: TYPE_INT64
+    dims: [-1]  # [batch_size]
+  },
+  {
+    name: "targets"
+    data_type: TYPE_INT32
+    dims: [-1, -1]  # [batch_size, target_length]
+  },
+  {
+    name: "target_length"
+    data_type: TYPE_INT32
+    dims: [-1]  # [batch_size]
+  },
+  {
+    name: "input_states_1"
+    data_type: TYPE_FP32
+    dims: [2, -1, 640]  # [2, batch_size, 640]
+  },
+  {
+    name: "input_states_2"
+    data_type: TYPE_FP32
+    dims: [2, -1, 640]  # [2, batch_size, 640]
+  }
+]
+
+output [
+  {
+    name: "tokens"
+    data_type: TYPE_INT32
+    dims: [-1, -1]  # [batch_size, sequence_length] - final decoded tokens
+  }
+]
+
+ensemble_scheduling {
+  step [
+    {
+      model_name: "encoder"
+      model_version: -1
+      input_map {
+        key: "audio_signal"
+        value: "audio_signal"
+      }
+      input_map {
+        key: "length"
+        value: "length"
+      }
+      output_map {
+        key: "outputs"
+        value: "encoder_outputs"
+      }
+      output_map {
+        key: "encoded_lengths"
+        value: "encoded_lengths"
+      }
+    },
+    {
+      model_name: "decoder_joint"
+      model_version: -1
+      input_map {
+        key: "encoder_outputs"
+        value: "encoder_outputs"
+      }
+      input_map {
+        key: "targets"
+        value: "targets"
+      }
+      input_map {
+        key: "target_length"
+        value: "target_length"  
+      }
+      input_map {
+        key: "input_states_1"
+        value: "input_states_1"
+      }
+      input_map {
+        key: "input_states_2"
+        value: "input_states_2"
+      }
+      output_map {
+        key: "outputs"
+        value: "decoder_joint_outputs"
+      }
+      output_map {
+        key: "prednet_lengths"
+        value: "prednet_lengths"
+      }
+      output_map {
+        key: "output_states_1"
+        value: "output_states_1"
+      }
+      output_map {
+        key: "output_states_2"
+        value: "output_states_2"
+      }
+    },
+    {
+      model_name: "k2_decoder"
+      model_version: -1
+      input_map {
+        key: "encoder_outputs"
+        value: "decoder_joint_outputs"
+      }
+      output_map {
+        key: "tokens"
+        value: "tokens"
+      }
+    }
+  ]
+}
+
+dynamic_batching {
+  max_queue_delay_microseconds: 5000
+}
