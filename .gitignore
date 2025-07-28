@@ -53,3 +53,11 @@ models/
 *.temp
 tmp/
 temp/
+
+# Third-party dependencies (use system installations or Docker)
+third_party/
+
+# Large binary model files (should use Git LFS or external storage)
+*.onnx
+*.pt
+*.pth
