@@ -190,3 +190,7 @@ export CMAKE_PREFIX_PATH=$INSTALL_DIR/libtorch:$INSTALL_DIR/k2/install:$INSTALL_
 echo "To build your project, use this CMAKE_PREFIX_PATH:"
 echo "export CMAKE_PREFIX_PATH=$CMAKE_PREFIX_PATH"
 echo ""
+
+echo "IMPORTANT: third_party/ is now excluded from git."
+echo "Run this script on each new machine/clone to download dependencies."
+echo "Consider using Docker for more consistent dependency management."
