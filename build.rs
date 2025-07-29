@@ -13,10 +13,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         
         // Use the triton installation from our setup script
         let install_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
-        let third_party_path = std::path::Path::new(&install_dir).join("third_party");
+        let project_root = std::path::Path::new(&install_dir);
 
-        let triton_lib_path = third_party_path.join("tritonserver/lib");
-        let triton_include_path = third_party_path.join("tritonserver/include");
+        let triton_lib_path = project_root.join("lib");
+        let triton_include_path = project_root.join("include");
         
         if !triton_lib_path.exists() || !triton_include_path.exists() {
             panic!(
@@ -27,7 +27,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         
         println!("cargo:rustc-link-search=native={}", triton_lib_path.display());
+        println!("cargo:rustc-link-search=native={}", project_root.join("local_lib").display());
+        println!("cargo:rustc-link-search=native=/usr/local/lib");
         println!("cargo:rustc-link-lib=tritonserver");
+        
+        // Link additional Triton libraries
+        println!("cargo:rustc-link-lib=tritoncommonerror");
+        println!("cargo:rustc-link-lib=tritoncommonlogging");
+        println!("cargo:rustc-link-lib=tritoncommonmodelconfig");
+        
+        // Set up runtime library path
+        println!("cargo:rustc-link-arg=-Wl,-rpath,{}", triton_lib_path.display());
+        println!("cargo:rustc-link-arg=-Wl,-rpath,{}", project_root.join("local_lib").display());
         
         // Use nvcc to compile CUDA code
         let nvcc_output = std::process::Command::new("nvcc")
@@ -59,8 +70,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             
             // Link the compiled CUDA object file
             println!("cargo:rustc-link-arg=cuda_helper.o");
+            
+            // Add CUDA library search paths
+            println!("cargo:rustc-link-search=native=/lib/x86_64-linux-gnu");
+            println!("cargo:rustc-link-search=native=/usr/local/cuda/targets/x86_64-linux/lib");
+            
+            // Link CUDA libraries
             println!("cargo:rustc-link-lib=cudart");
             println!("cargo:rustc-link-lib=cuda");
+            println!("cargo:rustc-link-lib=stdc++");
         } else {
             println!("cargo:warning=NVCC not found, CUDA features will be disabled");
         }

@@ -84,8 +84,56 @@ pub trait AsyncStream: Send + Sync {
     async fn shutdown(&mut self) -> Result<()>;
 }
 
+/// Create a specific I/O backend type
+pub async fn create_specific_io_backend(backend_type: IoBackendType, bind_addr: SocketAddr) -> Result<Box<dyn IoBackend>> {
+    info!("Creating I/O backend: {:?}", backend_type);
+    
+    match backend_type {
+        IoBackendType::IoUring => {
+            #[cfg(target_os = "linux")]
+            {
+                info!("Creating io_uring backend");
+                Ok(Box::new(IoUringBackend::new(bind_addr).await?))
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                warn!("io_uring requested but not available on this platform, falling back to default");
+                create_fallback_backend(bind_addr).await
+            }
+        },
+        IoBackendType::Epoll => {
+            #[cfg(target_os = "linux")]
+            {
+                info!("Creating epoll backend");
+                Ok(Box::new(EpollBackend::new(bind_addr).await?))
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                warn!("epoll requested but not available on this platform, falling back to default");
+                create_fallback_backend(bind_addr).await
+            }
+        },
+        IoBackendType::Kqueue => {
+            #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+            {
+                info!("Creating kqueue backend");
+                Ok(Box::new(KqueueBackend::new(bind_addr).await?))
+            }
+            #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
+            {
+                warn!("kqueue requested but not available on this platform, falling back to default");
+                create_fallback_backend(bind_addr).await
+            }
+        },
+        IoBackendType::Select => {
+            info!("Creating select backend (fallback)");
+            create_fallback_backend(bind_addr).await
+        },
+    }
+}
+
 /// Create the optimal I/O backend for the current platform
-pub fn create_optimal_io_backend(bind_addr: SocketAddr) -> Result<Box<dyn IoBackend>> {
+pub async fn create_optimal_io_backend(bind_addr: SocketAddr) -> Result<Box<dyn IoBackend>> {
     let platform = detect_platform();
     
     info!("Creating optimal I/O backend for platform: {:?}", platform.os);
@@ -93,50 +141,7 @@ pub fn create_optimal_io_backend(bind_addr: SocketAddr) -> Result<Box<dyn IoBack
     // Determine the best backend based on platform capabilities
     let selected_backend = select_optimal_backend(&platform);
     
-    info!("Selected I/O backend: {:?}", selected_backend);
-    
-    match selected_backend {
-        IoBackendType::IoUring => {
-            #[cfg(target_os = "linux")]
-            {
-                info!("Creating io_uring backend");
-                Ok(Box::new(IoUringBackend::new(bind_addr)?))
-            }
-            #[cfg(not(target_os = "linux"))]
-            {
-                warn!("io_uring requested but not available on this platform, falling back to default");
-                create_fallback_backend(bind_addr)
-            }
-        },
-        IoBackendType::Epoll => {
-            #[cfg(target_os = "linux")]
-            {
-                info!("Creating epoll backend");
-                Ok(Box::new(EpollBackend::new(bind_addr)?))
-            }
-            #[cfg(not(target_os = "linux"))]
-            {
-                warn!("epoll requested but not available on this platform, falling back to default");
-                create_fallback_backend(bind_addr)
-            }
-        },
-        IoBackendType::Kqueue => {
-            #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-            {
-                info!("Creating kqueue backend");
-                Ok(Box::new(KqueueBackend::new(bind_addr)?))
-            }
-            #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
-            {
-                warn!("kqueue requested but not available on this platform, falling back to default");
-                create_fallback_backend(bind_addr)
-            }
-        },
-        IoBackendType::Select => {
-            info!("Creating select backend (fallback)");
-            create_fallback_backend(bind_addr)
-        },
-    }
+    create_specific_io_backend(selected_backend, bind_addr).await
 }
 
 fn select_optimal_backend(platform: &super::detection::PlatformInfo) -> IoBackendType {
@@ -174,8 +179,8 @@ fn select_optimal_backend(platform: &super::detection::PlatformInfo) -> IoBacken
     IoBackendType::Select
 }
 
-fn create_fallback_backend(bind_addr: SocketAddr) -> Result<Box<dyn IoBackend>> {
-    Ok(Box::new(TokioBackend::new(bind_addr)?))
+async fn create_fallback_backend(bind_addr: SocketAddr) -> Result<Box<dyn IoBackend>> {
+    Ok(Box::new(TokioBackend::new(bind_addr).await?))
 }
 
 // Linux io_uring backend
@@ -186,13 +191,11 @@ pub struct IoUringBackend {
 
 #[cfg(target_os = "linux")]
 impl IoUringBackend {
-    pub fn new(bind_addr: SocketAddr) -> Result<Self> {
+    pub async fn new(bind_addr: SocketAddr) -> Result<Self> {
         // In a real implementation, we'd use io_uring crate
         // For now, we'll create a placeholder that uses tokio-uring
-        let rt = tokio::runtime::Handle::current();
-        let listener = rt.block_on(async {
-            TcpListener::bind(bind_addr).await
-        }).map_err(|e| AppError::Network(format!("Failed to bind io_uring listener: {}", e)))?;
+        let listener = TcpListener::bind(bind_addr).await
+            .map_err(|e| AppError::Network(format!("Failed to bind io_uring listener: {}", e)))?;
         
         Ok(Self { listener })
     }
@@ -246,11 +249,9 @@ pub struct EpollBackend {
 
 #[cfg(target_os = "linux")]
 impl EpollBackend {
-    pub fn new(bind_addr: SocketAddr) -> Result<Self> {
-        let rt = tokio::runtime::Handle::current();
-        let listener = rt.block_on(async {
-            TcpListener::bind(bind_addr).await
-        }).map_err(|e| AppError::Network(format!("Failed to bind epoll listener: {}", e)))?;
+    pub async fn new(bind_addr: SocketAddr) -> Result<Self> {
+        let listener = TcpListener::bind(bind_addr).await
+            .map_err(|e| AppError::Network(format!("Failed to bind epoll listener: {}", e)))?;
         
         Ok(Self { listener })
     }
@@ -304,11 +305,9 @@ pub struct KqueueBackend {
 
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
 impl KqueueBackend {
-    pub fn new(bind_addr: SocketAddr) -> Result<Self> {
-        let rt = tokio::runtime::Handle::current();
-        let listener = rt.block_on(async {
-            TcpListener::bind(bind_addr).await
-        }).map_err(|e| AppError::Network(format!("Failed to bind kqueue listener: {}", e)))?;
+    pub async fn new(bind_addr: SocketAddr) -> Result<Self> {
+        let listener = TcpListener::bind(bind_addr).await
+            .map_err(|e| AppError::Network(format!("Failed to bind kqueue listener: {}", e)))?;
         
         Ok(Self { listener })
     }
@@ -360,11 +359,9 @@ pub struct TokioBackend {
 }
 
 impl TokioBackend {
-    pub fn new(bind_addr: SocketAddr) -> Result<Self> {
-        let rt = tokio::runtime::Handle::current();
-        let listener = rt.block_on(async {
-            TcpListener::bind(bind_addr).await
-        }).map_err(|e| AppError::Network(format!("Failed to bind tokio listener: {}", e)))?;
+    pub async fn new(bind_addr: SocketAddr) -> Result<Self> {
+        let listener = TcpListener::bind(bind_addr).await
+            .map_err(|e| AppError::Network(format!("Failed to bind tokio listener: {}", e)))?;
         
         Ok(Self { listener })
     }
@@ -452,14 +449,14 @@ mod tests {
     #[tokio::test]
     async fn test_backend_creation() {
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
-        let backend = create_optimal_io_backend(addr);
+        let backend = create_optimal_io_backend(addr).await;
         assert!(backend.is_ok());
     }
 
-    #[test]
-    fn test_performance_profiles() {
+    #[tokio::test]
+    async fn test_performance_profiles() {
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
-        let backend = create_optimal_io_backend(addr).unwrap();
+        let backend = create_optimal_io_backend(addr).await.unwrap();
         let profile = backend.performance_profile();
         
         // All backends should have reasonable performance characteristics

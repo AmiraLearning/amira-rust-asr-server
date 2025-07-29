@@ -4,6 +4,7 @@ use std::task::{Context, Poll};
 use std::os::raw::{c_int, c_void};
 use std::sync::Arc;
 use tokio::sync::oneshot;
+use futures::FutureExt;
 
 use crate::cuda::{CudaError, CudaSharedMemoryError};
 
@@ -263,16 +264,33 @@ impl Drop for AsyncCudaEvent {
     }
 }
 
+/// Safe wrapper for CUDA handle that implements Send
+#[derive(Clone, Copy)]
+struct SendCudaHandle(*mut c_void);
+
+unsafe impl Send for SendCudaHandle {}
+unsafe impl Sync for SendCudaHandle {}
+
+impl SendCudaHandle {
+    fn query_stream(self) -> CudaError {
+        unsafe { cuda_stream_query(self.0) }
+    }
+    
+    fn query_event(self) -> CudaError {
+        unsafe { cuda_event_query(self.0) }
+    }
+}
+
 /// Future for waiting on CUDA stream completion
 struct StreamWaiter {
-    stream: *mut c_void,
+    stream: SendCudaHandle,
     receiver: Option<oneshot::Receiver<Result<(), CudaSharedMemoryError>>>,
 }
 
 impl StreamWaiter {
     fn new(stream: *mut c_void) -> Self {
         StreamWaiter {
-            stream,
+            stream: SendCudaHandle(stream),
             receiver: None,
         }
     }
@@ -283,7 +301,7 @@ impl Future for StreamWaiter {
     
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         // Check if stream is already complete
-        if unsafe { cuda_stream_query(self.stream) } == CudaError::CudaSuccess {
+        if self.stream.query_stream() == CudaError::CudaSuccess {
             return Poll::Ready(Ok(()));
         }
         
@@ -296,7 +314,7 @@ impl Future for StreamWaiter {
             tokio::spawn(async move {
                 // Poll in a loop until complete
                 loop {
-                    if unsafe { cuda_stream_query(stream) } == CudaError::CudaSuccess {
+                    if stream.query_stream() == CudaError::CudaSuccess {
                         let _ = tx.send(Ok(()));
                         waker.wake();
                         break;
@@ -321,14 +339,14 @@ impl Future for StreamWaiter {
 
 /// Future for waiting on CUDA event completion
 struct EventWaiter {
-    event: *mut c_void,
+    event: SendCudaHandle,
     receiver: Option<oneshot::Receiver<Result<(), CudaSharedMemoryError>>>,
 }
 
 impl EventWaiter {
     fn new(event: *mut c_void) -> Self {
         EventWaiter {
-            event,
+            event: SendCudaHandle(event),
             receiver: None,
         }
     }
@@ -339,7 +357,7 @@ impl Future for EventWaiter {
     
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         // Check if event is already complete
-        if unsafe { cuda_event_query(self.event) } == CudaError::CudaSuccess {
+        if self.event.query_event() == CudaError::CudaSuccess {
             return Poll::Ready(Ok(()));
         }
         
@@ -352,7 +370,7 @@ impl Future for EventWaiter {
             tokio::spawn(async move {
                 // Poll in a loop until complete
                 loop {
-                    if unsafe { cuda_event_query(event) } == CudaError::CudaSuccess {
+                    if event.query_event() == CudaError::CudaSuccess {
                         let _ = tx.send(Ok(()));
                         waker.wake();
                         break;

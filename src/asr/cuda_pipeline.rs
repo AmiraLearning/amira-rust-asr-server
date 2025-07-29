@@ -55,20 +55,20 @@ impl CudaAsrPipeline {
         
         // Create memory pools for each model
         let preprocessor_pool = CudaSharedMemoryPool::new_for_model(preprocessor_config, device_id)
-            .map_err(|e| AppError::CudaError(format!("Failed to create preprocessor pool: {}", e)))?;
+            .map_err(|e| AppError::Cuda(crate::error::CudaError::Device(format!("Failed to create preprocessor pool: {}", e))))?;
         
         let encoder_pool = CudaSharedMemoryPool::new_for_model(encoder_config, device_id)
-            .map_err(|e| AppError::CudaError(format!("Failed to create encoder pool: {}", e)))?;
+            .map_err(|e| AppError::Cuda(crate::error::CudaError::Device(format!("Failed to create encoder pool: {}", e))))?;
         
         let decoder_joint_pool = CudaSharedMemoryPool::new_for_model(decoder_joint_config, device_id)
-            .map_err(|e| AppError::CudaError(format!("Failed to create decoder joint pool: {}", e)))?;
+            .map_err(|e| AppError::Cuda(crate::error::CudaError::Device(format!("Failed to create decoder joint pool: {}", e))))?;
         
         // Register all regions with Triton server
         Self::register_pools_with_triton(&preprocessor_pool, &encoder_pool, &decoder_joint_pool)?;
         
         // Create async CUDA stream pool for overlapping operations
         let stream_pool = AsyncCudaStreamPool::new(device_id, 3) // 3 streams: preprocessor, encoder, decoder
-            .map_err(|e| AppError::CudaError(format!("Failed to create stream pool: {}", e)))?;
+            .map_err(|e| AppError::Cuda(crate::error::CudaError::Device(format!("Failed to create stream pool: {}", e))))?;
         
         info!("CUDA ASR pipeline initialized successfully");
         
@@ -95,31 +95,31 @@ impl CudaAsrPipeline {
         // Register preprocessor regions
         for (name, region) in &preprocessor_pool.input_regions {
             region.register_with_triton_server()
-                .map_err(|e| AppError::CudaError(format!("Failed to register preprocessor input {}: {}", name, e)))?;
+                .map_err(|e| AppError::Cuda(crate::error::CudaError::Device(format!("Failed to register preprocessor input {}: {}", name, e))))?;
         }
         for (name, region) in &preprocessor_pool.output_regions {
             region.register_with_triton_server()
-                .map_err(|e| AppError::CudaError(format!("Failed to register preprocessor output {}: {}", name, e)))?;
+                .map_err(|e| AppError::Cuda(crate::error::CudaError::Device(format!("Failed to register preprocessor output {}: {}", name, e))))?;
         }
         
         // Register encoder regions
         for (name, region) in &encoder_pool.input_regions {
             region.register_with_triton_server()
-                .map_err(|e| AppError::CudaError(format!("Failed to register encoder input {}: {}", name, e)))?;
+                .map_err(|e| AppError::Cuda(crate::error::CudaError::Device(format!("Failed to register encoder input {}: {}", name, e))))?;
         }
         for (name, region) in &encoder_pool.output_regions {
             region.register_with_triton_server()
-                .map_err(|e| AppError::CudaError(format!("Failed to register encoder output {}: {}", name, e)))?;
+                .map_err(|e| AppError::Cuda(crate::error::CudaError::Device(format!("Failed to register encoder output {}: {}", name, e))))?;
         }
         
         // Register decoder joint regions
         for (name, region) in &decoder_joint_pool.input_regions {
             region.register_with_triton_server()
-                .map_err(|e| AppError::CudaError(format!("Failed to register decoder joint input {}: {}", name, e)))?;
+                .map_err(|e| AppError::Cuda(crate::error::CudaError::Device(format!("Failed to register decoder joint input {}: {}", name, e))))?;
         }
         for (name, region) in &decoder_joint_pool.output_regions {
             region.register_with_triton_server()
-                .map_err(|e| AppError::CudaError(format!("Failed to register decoder joint output {}: {}", name, e)))?;
+                .map_err(|e| AppError::Cuda(crate::error::CudaError::Device(format!("Failed to register decoder joint output {}: {}", name, e))))?;
         }
         
         info!("Successfully registered all CUDA memory regions with Triton server");
@@ -148,18 +148,18 @@ impl CudaAsrPipeline {
         
         // Get dedicated stream for preprocessor operations
         let stream = self.stream_pool.get_stream(0)
-            .ok_or_else(|| AppError::CudaError("Failed to get preprocessor stream".to_string()))?;
+            .ok_or_else(|| AppError::Cuda(crate::error::CudaError::Device("Failed to get preprocessor stream".to_string())))?;
         
         // Get input and output regions
         let input_region = self.preprocessor_pool.get_input_region("AUDIO_FRAMES")
-            .ok_or_else(|| AppError::CudaError("Missing preprocessor input region".to_string()))?;
+            .ok_or_else(|| AppError::Cuda(crate::error::CudaError::Device("Missing preprocessor input region".to_string())))?;
         
         let output_region = self.preprocessor_pool.get_output_region("MEL_FEATURES")
-            .ok_or_else(|| AppError::CudaError("Missing preprocessor output region".to_string()))?;
+            .ok_or_else(|| AppError::Cuda(crate::error::CudaError::Device("Missing preprocessor output region".to_string())))?;
         
         // Enqueue input data write to CUDA memory (non-blocking)
         input_region.enqueue_write_f32_data(audio_samples, &stream)
-            .map_err(|e| AppError::CudaError(format!("Failed to enqueue preprocessor input: {}", e)))?;
+            .map_err(|e| AppError::Cuda(crate::error::CudaError::Device(format!("Failed to enqueue preprocessor input: {}", e))))?;
         
         // Enqueue inference (non-blocking, automatically ordered after write)
         input_region.enqueue_inference_with_output_regions(
@@ -168,20 +168,20 @@ impl CudaAsrPipeline {
             "AUDIO_FRAMES",
             "MEL_FEATURES",
             &stream,
-        ).map_err(|e| AppError::CudaError(format!("Failed to enqueue preprocessor inference: {}", e)))?;
+        ).map_err(|e| AppError::Cuda(crate::error::CudaError::Device(format!("Failed to enqueue preprocessor inference: {}", e))))?;
         
         // Read output data
         let output_size = self.preprocessor_pool.config.calculate_output_buffer_size("MEL_FEATURES")
-            .ok_or_else(|| AppError::CudaError("Failed to calculate output buffer size".to_string()))?;
+            .ok_or_else(|| AppError::Cuda(crate::error::CudaError::Device("Failed to calculate output buffer size".to_string())))?;
         
         // Enqueue output data read (non-blocking, automatically ordered after inference)
         let output_elements = output_size / 4; // f32 is 4 bytes
         let mut mel_features = vec![0.0f32; output_elements];
         output_region.enqueue_read_f32_data(&mut mel_features, &stream)
-            .map_err(|e| AppError::CudaError(format!("Failed to enqueue preprocessor output read: {}", e)))?;
+            .map_err(|e| AppError::Cuda(crate::error::CudaError::Device(format!("Failed to enqueue preprocessor output read: {}", e))))?;
         
         // Only wait when we need the results on the host
-        stream.wait().await.map_err(|e| AppError::CudaError(format!("Failed to wait for preprocessor completion: {}", e)))?;
+        stream.wait().await.map_err(|e| AppError::Cuda(crate::error::CudaError::Device(format!("Failed to wait for preprocessor completion: {}", e))))?;
         
         debug!("Preprocessor completed, output size: {}", mel_features.len());
         Ok(mel_features)
@@ -193,27 +193,27 @@ impl CudaAsrPipeline {
         
         // Get dedicated stream for encoder operations
         let stream = self.stream_pool.get_stream(1)
-            .ok_or_else(|| AppError::CudaError("Failed to get encoder stream".to_string()))?;
+            .ok_or_else(|| AppError::Cuda(crate::error::CudaError::Device("Failed to get encoder stream".to_string())))?;
         
         // Get input and output regions
         let mel_input_region = self.encoder_pool.get_input_region("MEL_FEATURES")
-            .ok_or_else(|| AppError::CudaError("Missing encoder MEL_FEATURES input region".to_string()))?;
+            .ok_or_else(|| AppError::Cuda(crate::error::CudaError::Device("Missing encoder MEL_FEATURES input region".to_string())))?;
         
         let state_input_region = self.encoder_pool.get_input_region("ENCODER_STATE")
-            .ok_or_else(|| AppError::CudaError("Missing encoder ENCODER_STATE input region".to_string()))?;
+            .ok_or_else(|| AppError::Cuda(crate::error::CudaError::Device("Missing encoder ENCODER_STATE input region".to_string())))?;
         
         let output_region = self.encoder_pool.get_output_region("ENCODER_OUTPUT")
-            .ok_or_else(|| AppError::CudaError("Missing encoder ENCODER_OUTPUT output region".to_string()))?;
+            .ok_or_else(|| AppError::Cuda(crate::error::CudaError::Device("Missing encoder ENCODER_OUTPUT output region".to_string())))?;
         
         let state_output_region = self.encoder_pool.get_output_region("UPDATED_ENCODER_STATE")
-            .ok_or_else(|| AppError::CudaError("Missing encoder UPDATED_ENCODER_STATE output region".to_string()))?;
+            .ok_or_else(|| AppError::Cuda(crate::error::CudaError::Device("Missing encoder UPDATED_ENCODER_STATE output region".to_string())))?;
         
         // Enqueue input data writes to CUDA memory (non-blocking, can overlap)
         mel_input_region.enqueue_write_f32_data(mel_features, &stream)
-            .map_err(|e| AppError::CudaError(format!("Failed to enqueue encoder mel features: {}", e)))?;
+            .map_err(|e| AppError::Cuda(crate::error::CudaError::Device(format!("Failed to enqueue encoder mel features: {}", e))))?;
         
         state_input_region.enqueue_write_f32_data(encoder_state, &stream)
-            .map_err(|e| AppError::CudaError(format!("Failed to enqueue encoder state: {}", e)))?;
+            .map_err(|e| AppError::Cuda(crate::error::CudaError::Device(format!("Failed to enqueue encoder state: {}", e))))?;
         
         // Enqueue inference (non-blocking, automatically ordered after both writes)
         mel_input_region.enqueue_inference_with_output_regions(
@@ -222,27 +222,27 @@ impl CudaAsrPipeline {
             "MEL_FEATURES",
             "ENCODER_OUTPUT",
             &stream,
-        ).map_err(|e| AppError::CudaError(format!("Failed to enqueue encoder inference: {}", e)))?;
+        ).map_err(|e| AppError::Cuda(crate::error::CudaError::Device(format!("Failed to enqueue encoder inference: {}", e))))?;
         
         // Read output data
         let output_size = self.encoder_pool.config.calculate_output_buffer_size("ENCODER_OUTPUT")
-            .ok_or_else(|| AppError::CudaError("Failed to calculate encoder output buffer size".to_string()))?;
+            .ok_or_else(|| AppError::Cuda(crate::error::CudaError::Device("Failed to calculate encoder output buffer size".to_string())))?;
         
         let state_size = self.encoder_pool.config.calculate_output_buffer_size("UPDATED_ENCODER_STATE")
-            .ok_or_else(|| AppError::CudaError("Failed to calculate encoder state buffer size".to_string()))?;
+            .ok_or_else(|| AppError::Cuda(crate::error::CudaError::Device("Failed to calculate encoder state buffer size".to_string())))?;
         
         // Enqueue output data reads (non-blocking, automatically ordered after inference)
         let mut encoder_output = vec![0.0f32; output_size / 4];
         let mut updated_encoder_state = vec![0.0f32; state_size / 4];
         
         output_region.enqueue_read_f32_data(&mut encoder_output, &stream)
-            .map_err(|e| AppError::CudaError(format!("Failed to enqueue encoder output read: {}", e)))?;
+            .map_err(|e| AppError::Cuda(crate::error::CudaError::Device(format!("Failed to enqueue encoder output read: {}", e))))?;
         
         state_output_region.enqueue_read_f32_data(&mut updated_encoder_state, &stream)
-            .map_err(|e| AppError::CudaError(format!("Failed to enqueue encoder state read: {}", e)))?;
+            .map_err(|e| AppError::Cuda(crate::error::CudaError::Device(format!("Failed to enqueue encoder state read: {}", e))))?;
         
         // Only wait when we need the results on the host
-        stream.wait().await.map_err(|e| AppError::CudaError(format!("Failed to wait for encoder completion: {}", e)))?;
+        stream.wait().await.map_err(|e| AppError::Cuda(crate::error::CudaError::Device(format!("Failed to wait for encoder completion: {}", e))))?;
         
         // Update the encoder state
         *encoder_state = updated_encoder_state.clone();
@@ -257,23 +257,23 @@ impl CudaAsrPipeline {
         
         // Get input and output regions
         let encoder_input_region = self.decoder_joint_pool.get_input_region("ENCODER_OUTPUT")
-            .ok_or_else(|| AppError::CudaError("Missing decoder joint ENCODER_OUTPUT input region".to_string()))?;
+            .ok_or_else(|| AppError::Cuda(crate::error::CudaError::Device("Missing decoder joint ENCODER_OUTPUT input region".to_string())))?;
         
         let state_input_region = self.decoder_joint_pool.get_input_region("DECODER_STATE")
-            .ok_or_else(|| AppError::CudaError("Missing decoder joint DECODER_STATE input region".to_string()))?;
+            .ok_or_else(|| AppError::Cuda(crate::error::CudaError::Device("Missing decoder joint DECODER_STATE input region".to_string())))?;
         
         let logits_output_region = self.decoder_joint_pool.get_output_region("LOGITS")
-            .ok_or_else(|| AppError::CudaError("Missing decoder joint LOGITS output region".to_string()))?;
+            .ok_or_else(|| AppError::Cuda(crate::error::CudaError::Device("Missing decoder joint LOGITS output region".to_string())))?;
         
         let state_output_region = self.decoder_joint_pool.get_output_region("UPDATED_DECODER_STATE")
-            .ok_or_else(|| AppError::CudaError("Missing decoder joint UPDATED_DECODER_STATE output region".to_string()))?;
+            .ok_or_else(|| AppError::Cuda(crate::error::CudaError::Device("Missing decoder joint UPDATED_DECODER_STATE output region".to_string())))?;
         
         // Write input data to CUDA memory
         encoder_input_region.write_f32_data(encoder_output)
-            .map_err(|e| AppError::CudaError(format!("Failed to write decoder joint encoder output: {}", e)))?;
+            .map_err(|e| AppError::Cuda(crate::error::CudaError::Device(format!("Failed to write decoder joint encoder output: {}", e))))?;
         
         state_input_region.write_f32_data(decoder_state)
-            .map_err(|e| AppError::CudaError(format!("Failed to write decoder joint state: {}", e)))?;
+            .map_err(|e| AppError::Cuda(crate::error::CudaError::Device(format!("Failed to write decoder joint state: {}", e))))?;
         
         // Run inference
         encoder_input_region.run_inference_with_output_regions(
@@ -281,20 +281,20 @@ impl CudaAsrPipeline {
             &self.decoder_joint_pool.config,
             "ENCODER_OUTPUT",
             "LOGITS",
-        ).map_err(|e| AppError::CudaError(format!("Decoder joint inference failed: {}", e)))?;
+        ).map_err(|e| AppError::Cuda(crate::error::CudaError::Device(format!("Decoder joint inference failed: {}", e))))?;
         
         // Read output data
         let logits_size = self.decoder_joint_pool.config.calculate_output_buffer_size("LOGITS")
-            .ok_or_else(|| AppError::CudaError("Failed to calculate logits buffer size".to_string()))?;
+            .ok_or_else(|| AppError::Cuda(crate::error::CudaError::Device("Failed to calculate logits buffer size".to_string())))?;
         
         let state_size = self.decoder_joint_pool.config.calculate_output_buffer_size("UPDATED_DECODER_STATE")
-            .ok_or_else(|| AppError::CudaError("Failed to calculate decoder state buffer size".to_string()))?;
+            .ok_or_else(|| AppError::Cuda(crate::error::CudaError::Device("Failed to calculate decoder state buffer size".to_string())))?;
         
         let logits = logits_output_region.read_f32_data(logits_size / 4)
-            .map_err(|e| AppError::CudaError(format!("Failed to read logits: {}", e)))?;
+            .map_err(|e| AppError::Cuda(crate::error::CudaError::Device(format!("Failed to read logits: {}", e))))?;
         
         let updated_decoder_state = state_output_region.read_f32_data(state_size / 4)
-            .map_err(|e| AppError::CudaError(format!("Failed to read decoder state: {}", e)))?;
+            .map_err(|e| AppError::Cuda(crate::error::CudaError::Device(format!("Failed to read decoder state: {}", e))))?;
         
         // Update the decoder state
         *decoder_state = updated_decoder_state.clone();

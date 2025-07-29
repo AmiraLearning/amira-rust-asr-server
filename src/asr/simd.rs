@@ -293,6 +293,7 @@ pub unsafe fn softmax_avx512(input: &[f32], output: &mut [f32]) -> Result<()> {
     if len >= 16 {
         let mut max_vec = _mm512_set1_ps(input[0]);
         let chunks = input.chunks_exact(16);
+        let remainder = chunks.remainder();
         
         for chunk in chunks {
             let vals = _mm512_loadu_ps(chunk.as_ptr());
@@ -304,7 +305,7 @@ pub unsafe fn softmax_avx512(input: &[f32], output: &mut [f32]) -> Result<()> {
         max_val = max_array.iter().fold(max_val, |acc, &x| acc.max(x));
         
         // Handle remainder
-        for &val in chunks.remainder() {
+        for &val in remainder {
             max_val = max_val.max(val);
         }
     } else {
@@ -321,12 +322,13 @@ pub unsafe fn softmax_avx512(input: &[f32], output: &mut [f32]) -> Result<()> {
     if len >= 16 {
         let mut sum_vec = _mm512_setzero_ps();
         let chunks_in = input.chunks_exact(16);
+        let remainder_in = chunks_in.remainder();
         let chunks_out = output.chunks_exact_mut(16);
         
         for (chunk_in, chunk_out) in chunks_in.zip(chunks_out) {
             let vals = _mm512_loadu_ps(chunk_in.as_ptr());
             let shifted = _mm512_sub_ps(vals, max_broadcast);
-            let exp_vals = _mm512_exp_ps(shifted);
+            let exp_vals = exp_approx_avx512(shifted);
             
             _mm512_storeu_ps(chunk_out.as_mut_ptr(), exp_vals);
             sum_vec = _mm512_add_ps(sum_vec, exp_vals);
@@ -337,9 +339,8 @@ pub unsafe fn softmax_avx512(input: &[f32], output: &mut [f32]) -> Result<()> {
         sum = sum_array.iter().sum();
         
         // Handle remainder
-        let remainder_in = chunks_in.remainder();
         let remainder_out = &mut output[len - remainder_in.len()..];
-        for ((&val, out)) in remainder_in.iter().zip(remainder_out.iter_mut()) {
+        for (&val, out) in remainder_in.iter().zip(remainder_out.iter_mut()) {
             let exp_val = (val - max_val).exp();
             *out = exp_val;
             sum += exp_val;
@@ -362,8 +363,9 @@ pub unsafe fn softmax_avx512(input: &[f32], output: &mut [f32]) -> Result<()> {
     let inv_sum_broadcast = _mm512_set1_ps(inv_sum);
     
     if len >= 16 {
+        let remainder_len = len % 16;
+        let remainder_start = len - remainder_len;
         let chunks = output.chunks_exact_mut(16);
-        let remainder_start = len - chunks.remainder().len();
         
         for chunk in chunks {
             let vals = _mm512_loadu_ps(chunk.as_ptr());
@@ -407,6 +409,7 @@ pub unsafe fn softmax_avx2(input: &[f32], output: &mut [f32]) -> Result<()> {
     if len >= 8 {
         let mut max_vec = _mm256_set1_ps(input[0]);
         let chunks = input.chunks_exact(8);
+        let remainder = chunks.remainder();
         
         for chunk in chunks {
             let vals = _mm256_loadu_ps(chunk.as_ptr());
@@ -417,7 +420,7 @@ pub unsafe fn softmax_avx2(input: &[f32], output: &mut [f32]) -> Result<()> {
         let max_array: [f32; 8] = std::mem::transmute(max_vec);
         max_val = max_array.iter().fold(max_val, |acc, &x| acc.max(x));
         
-        for &val in chunks.remainder() {
+        for &val in remainder {
             max_val = max_val.max(val);
         }
     } else {
@@ -433,6 +436,7 @@ pub unsafe fn softmax_avx2(input: &[f32], output: &mut [f32]) -> Result<()> {
     if len >= 8 {
         let mut sum_vec = _mm256_setzero_ps();
         let chunks_in = input.chunks_exact(8);
+        let remainder_in = chunks_in.remainder();
         let chunks_out = output.chunks_exact_mut(8);
         
         for (chunk_in, chunk_out) in chunks_in.zip(chunks_out) {
@@ -451,9 +455,8 @@ pub unsafe fn softmax_avx2(input: &[f32], output: &mut [f32]) -> Result<()> {
         sum = sum_array.iter().sum();
         
         // Handle remainder
-        let remainder_in = chunks_in.remainder();
         let remainder_out = &mut output[len - remainder_in.len()..];
-        for ((&val, out)) in remainder_in.iter().zip(remainder_out.iter_mut()) {
+        for (&val, out) in remainder_in.iter().zip(remainder_out.iter_mut()) {
             let exp_val = (val - max_val).exp();
             *out = exp_val;
             sum += exp_val;
@@ -514,6 +517,26 @@ unsafe fn exp_approx_avx2(x: __m256) -> __m256 {
     let result = _mm256_add_ps(one, term1);
     let result = _mm256_add_ps(result, term2);
     _mm256_add_ps(result, term3)
+}
+
+#[cfg(target_arch = "x86_64")]
+unsafe fn exp_approx_avx512(x: __m512) -> __m512 {
+    // Fast exp approximation using polynomial
+    // exp(x) ≈ 1 + x + x²/2 + x³/6 for small x
+    let one = _mm512_set1_ps(1.0);
+    let half = _mm512_set1_ps(0.5);
+    let sixth = _mm512_set1_ps(1.0 / 6.0);
+    
+    let x2 = _mm512_mul_ps(x, x);
+    let x3 = _mm512_mul_ps(x2, x);
+    
+    let term1 = x;
+    let term2 = _mm512_mul_ps(x2, half);
+    let term3 = _mm512_mul_ps(x3, sixth);
+    
+    let result = _mm512_add_ps(one, term1);
+    let result = _mm512_add_ps(result, term2);
+    _mm512_add_ps(result, term3)
 }
 
 /// Optimized softmax with automatic SIMD selection.
@@ -595,6 +618,7 @@ pub unsafe fn batch_normalize_avx2(
     
     if len >= 8 {
         let chunks_in = input.chunks_exact(8);
+        let remainder_in = chunks_in.remainder();
         let chunks_out = output.chunks_exact_mut(8);
         
         for (chunk_in, chunk_out) in chunks_in.zip(chunks_out) {
@@ -605,9 +629,8 @@ pub unsafe fn batch_normalize_avx2(
         }
         
         // Handle remainder
-        let remainder_in = chunks_in.remainder();
         let remainder_out = &mut output[len - remainder_in.len()..];
-        for ((&val, out)) in remainder_in.iter().zip(remainder_out.iter_mut()) {
+        for (&val, out) in remainder_in.iter().zip(remainder_out.iter_mut()) {
             *out = (val - mean) * inv_std;
         }
     } else {
@@ -682,7 +705,9 @@ pub unsafe fn dot_product_avx2(a: &[f32], b: &[f32]) -> Result<f32> {
     if len >= 8 {
         let mut sum_vec = _mm256_setzero_ps();
         let chunks_a = a.chunks_exact(8);
+        let remainder_a = chunks_a.remainder();
         let chunks_b = b.chunks_exact(8);
+        let remainder_b = chunks_b.remainder();
         
         for (chunk_a, chunk_b) in chunks_a.zip(chunks_b) {
             let vals_a = _mm256_loadu_ps(chunk_a.as_ptr());
@@ -696,14 +721,12 @@ pub unsafe fn dot_product_avx2(a: &[f32], b: &[f32]) -> Result<f32> {
         result = sum_array.iter().sum();
         
         // Handle remainder
-        let remainder_a = chunks_a.remainder();
-        let remainder_b = chunks_b.remainder();
-        for ((&a_val, &b_val)) in remainder_a.iter().zip(remainder_b.iter()) {
+        for (&a_val, &b_val) in remainder_a.iter().zip(remainder_b.iter()) {
             result += a_val * b_val;
         }
     } else {
         // Scalar fallback
-        for ((&a_val, &b_val)) in a.iter().zip(b.iter()) {
+        for (&a_val, &b_val) in a.iter().zip(b.iter()) {
             result += a_val * b_val;
         }
     }
@@ -774,7 +797,7 @@ unsafe fn smooth_audio_avx2(input: &[f32], output: &mut [f32], window_size: usiz
     }
 
     let window_size_f32 = window_size as f32;
-    let window_recip = _mm256_set1_ps(1.0 / window_size_f32);
+    let _window_recip = _mm256_set1_ps(1.0 / window_size_f32);
 
     for i in 0..input.len() {
         let start = if i >= window_size / 2 {
@@ -1166,6 +1189,7 @@ unsafe fn argmax_avx512(logits: &[f32]) -> (usize, f32) {
 
     let chunks = logits.chunks_exact(16);
     let remainder = chunks.remainder();
+    let chunks_len = chunks.len();
 
     let mut current_max = _mm512_set1_ps(f32::NEG_INFINITY);
     let mut current_indices = _mm512_setzero_si512();
@@ -1210,7 +1234,7 @@ unsafe fn argmax_avx512(logits: &[f32]) -> (usize, f32) {
     }
 
     // Check remainder
-    let base_idx = chunks.len() * 16;
+    let base_idx = chunks_len * 16;
     for (i, &val) in remainder.iter().enumerate() {
         if val > max_val {
             max_val = val;

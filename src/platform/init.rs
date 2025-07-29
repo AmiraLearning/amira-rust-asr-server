@@ -4,14 +4,16 @@
 //! validate configuration against platform constraints, and set up platform-specific
 //! optimizations.
 
+use std::net::SocketAddr;
 use tracing::{debug, info, warn};
+use async_trait::async_trait;
 
 use crate::config::Config;
 use crate::error::{AppError, Result};
 use super::{
     capabilities::{detect_capabilities, PlatformCapabilities},
     detection::{detect_platform, PlatformInfo, VirtualizationEnvironment, IoBackendType},
-    io_backend::{IoBackend, create_optimal_io_backend},
+    io_backend::{IoBackend, create_optimal_io_backend, create_specific_io_backend, PerformanceProfile, LatencyProfile, ThroughputProfile, CpuEfficiencyProfile, MemoryUsageProfile, AsyncStream},
     cloud_detection::{detect_cloud_environment, generate_cloud_config, apply_cloud_config, CloudInstanceInfo},
     numa_management::{create_numa_manager, NumaManager},
     affinity_management::{create_affinity_manager, AffinityManager},
@@ -81,8 +83,9 @@ pub async fn initialize_platform(mut config: Config) -> Result<PlatformInit> {
     // Apply platform-specific configuration adjustments
     apply_platform_optimizations(&mut config, &platform_info, &capabilities, &numa_manager, &affinity_manager)?;
     
-    // Select optimal I/O backend
-    let io_backend = select_io_backend(&config, &platform_info, &capabilities).await?;
+    // Note: Skipping I/O backend creation as we're using axum which handles this
+    // TODO: Integrate custom I/O backend with axum if needed for performance
+    let io_backend = create_dummy_backend().await?;
     
     // Validate configuration against platform constraints
     validate_platform_config(&config, &platform_info, &capabilities)?;
@@ -226,7 +229,64 @@ async fn select_io_backend(
         .parse()
         .map_err(|e| AppError::ConfigError(format!("Invalid server address: {}", e)))?;
     
-    create_optimal_io_backend(bind_addr)
+    create_specific_io_backend(backend_type, bind_addr).await
+}
+
+/// Create a dummy I/O backend that doesn't actually bind to a socket
+/// This is used when the server uses axum for HTTP handling instead of custom I/O backends
+async fn create_dummy_backend() -> Result<Box<dyn IoBackend>> {
+    Ok(Box::new(DummyBackend::new().await?))
+}
+
+/// Dummy I/O backend that doesn't actually bind to anything
+struct DummyBackend {
+    backend_type: IoBackendType,
+}
+
+impl DummyBackend {
+    async fn new() -> Result<Self> {
+        Ok(Self {
+            backend_type: IoBackendType::Select, // Default fallback type
+        })
+    }
+}
+
+#[async_trait]
+impl IoBackend for DummyBackend {
+    async fn accept(&self) -> Result<(Box<dyn AsyncStream>, SocketAddr)> {
+        // This should never be called since we're using axum
+        Err(AppError::Network("DummyBackend::accept should not be called".to_string()))
+    }
+    
+    fn backend_type(&self) -> IoBackendType {
+        self.backend_type.clone()
+    }
+    
+    fn performance_profile(&self) -> PerformanceProfile {
+        // Return basic performance profile
+        PerformanceProfile {
+            latency: LatencyProfile {
+                connection_accept_us: 50,
+                read_latency_us: 20,
+                write_latency_us: 20,
+            },
+            throughput: ThroughputProfile {
+                max_connections_per_sec: 10_000,
+                max_bytes_per_sec_per_conn: 1_000_000_000,
+                system_throughput_limit: Some(10_000_000_000),
+            },
+            cpu_efficiency: CpuEfficiencyProfile {
+                cycles_per_operation: 500,
+                scales_with_cores: true,
+                benefits_from_affinity: false,
+            },
+            memory_usage: MemoryUsageProfile {
+                base_overhead_bytes: 4096,
+                per_connection_bytes: 2048,
+                kernel_buffer_efficient: false,
+            },
+        }
+    }
 }
 
 /// Automatically select the best I/O backend for the platform

@@ -61,3 +61,30 @@ third_party/
 # *.onnx  # Commented out - now tracked by LFS
 # *.pt    # Commented out - now tracked by LFS
 # *.pth   # Commented out - now tracked by LFS
+
+# Archive files
+*.tar.gz
+*.tar.xz
+*.zip
+
+# Model repository and related files
+model-repo/
+*.skip/
+
+# Build artifacts
+*.o
+core.*
+bin/
+include/
+lib/
+local_lib/
+
+# Language bindings
+java-api-bindings/
+java/
+python/
+
+# Test files
+test_audio.raw
+test_audio.sh
+test_*

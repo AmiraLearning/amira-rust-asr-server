@@ -230,6 +230,9 @@ pub enum AppError {
     #[error("Triton inference error: {0}")]
     TritonInference(String),
     
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
+    
     #[error("Internal error: {0}")]
     Internal(String),
 }
@@ -321,6 +324,7 @@ impl AppError {
             AppError::CapacityExceeded(_) => "capacity_exceeded",
             AppError::TritonInference(_) => "triton_inference",
             AppError::Internal(_) => "internal",
+            AppError::InvalidInput(_) => "invalid_input",
         }
     }
 }

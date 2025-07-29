@@ -99,7 +99,7 @@ impl PreprocessorModel {
                 ..Default::default()
             })
             .with_output(InferRequestedOutputTensor {
-                name: "features_length".to_string(),
+                name: "features_lens".to_string(),
                 ..Default::default()
             })
             .build();
@@ -121,9 +121,9 @@ impl PreprocessorModel {
             );
 
             map.insert(
-                "features_length".to_string(),
+                "features_lens".to_string(),
                 TensorDef::new(
-                    "features_length",
+                    "features_lens",
                     TensorDataType::Int64,
                     TensorShape::new(vec![1]),
                 ),
@@ -138,8 +138,8 @@ impl PreprocessorModel {
             AppError::Asr(AsrError::ModelInference(ModelError::Inference("Missing features tensor in preprocessor response".to_string())))
         })?;
 
-        let features_length_tensor = tensors.get("features_length").ok_or_else(|| {
-            AppError::Asr(AsrError::ModelInference(ModelError::Inference("Missing features_length tensor in preprocessor response".to_string())))
+        let features_length_tensor = tensors.get("features_lens").ok_or_else(|| {
+            AppError::Asr(AsrError::ModelInference(ModelError::Inference("Missing features_lens tensor in preprocessor response".to_string())))
         })?;
 
         let features = features_tensor.as_f32()?;

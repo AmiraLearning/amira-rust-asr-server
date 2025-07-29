@@ -36,7 +36,7 @@ fn sample_index_to_logit_index(idx: usize) -> usize {
 /// including overlapping audio chunks and transcript accumulation.
 pub struct IncrementalAsr {
     /// The ASR pipeline
-    pipeline: Arc<TritonAsrPipeline>,
+    pipeline: Arc<dyn AsrPipeline + Send + Sync>,
 
     /// Vocabulary for decoding
     _vocabulary: Arc<Vocabulary>,
@@ -71,7 +71,7 @@ impl IncrementalAsr {
     /// * `trailing_context` - Trailing context size in seconds
     /// * `buffer_capacity` - Audio buffer capacity in seconds
     pub fn new(
-        pipeline: Arc<TritonAsrPipeline>,
+        pipeline: Arc<dyn AsrPipeline + Send + Sync>,
         vocabulary: Arc<Vocabulary>,
         chunk_size: f32,
         leading_context: f32,

@@ -572,7 +572,7 @@ impl CudaSharedMemoryRegion {
     /// - The memory region contains valid data of type T
     /// - The capacity doesn't exceed the actual allocated size
     /// - The memory is properly aligned for type T
-    pub unsafe fn as_device_buffer<T>(&self, capacity: usize) -> DeviceBuffer<T> {
+    pub unsafe fn as_device_buffer<T: 'static>(&self, capacity: usize) -> DeviceBuffer<T> {
         // Note: This is a simplified version - in practice you'd need to extract
         // the actual device pointer from the C handle
         let ptr = self.handle as *mut T;

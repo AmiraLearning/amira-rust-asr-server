@@ -42,7 +42,7 @@ extern "C" {
     fn cuda_get_device_count() -> c_int;
 }
 
-impl<T> DeviceBuffer<T> {
+impl<T: 'static> DeviceBuffer<T> {
     /// Allocate a new device buffer large enough to hold `capacity` `T`'s, but without
     /// initializing the contents.
     ///
@@ -478,7 +478,7 @@ impl<T> DeviceSlice<T> {
     }
 }
 
-impl<T> Deref for DeviceBuffer<T> {
+impl<T: 'static> Deref for DeviceBuffer<T> {
     type Target = DeviceSlice<T>;
 
     fn deref(&self) -> &Self::Target {
@@ -486,7 +486,7 @@ impl<T> Deref for DeviceBuffer<T> {
     }
 }
 
-impl<T> DerefMut for DeviceBuffer<T> {
+impl<T: 'static> DerefMut for DeviceBuffer<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.as_mut_slice()
     }
