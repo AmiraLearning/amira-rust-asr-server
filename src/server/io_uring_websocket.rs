@@ -19,7 +19,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::asr::types::{AsrResponse, StreamStatus};
 use crate::asr::{AudioRingBuffer, IncrementalAsr};
-use crate::error::{AppError, Result};
+use crate::error::{AppError, AsrError, AudioError, Result};
 use crate::performance::specialized_pools::spawn_io;
 
 /// Configuration for io_uring WebSocket optimization
@@ -277,8 +277,14 @@ impl IoUringWebSocketSession {
         
         // Check if we have enough data to process
         if self.audio_buffer.available_read() >= 32000 { // ~1 second at 16kHz
-            let audio = self.audio_buffer.read(32000)
-                .ok_or_else(|| AppError::Asr(AsrError::AudioProcessing(AudioError::InvalidFormat("Failed to read from audio buffer".to_string()))?;
+            let audio = self
+                .audio_buffer
+                .read(32000)
+                .ok_or_else(|| {
+                    AppError::Asr(AsrError::AudioProcessing(AudioError::InvalidFormat(
+                        "Failed to read from audio buffer".to_string(),
+                    )))
+                })?;
             
             // Process with incremental ASR
             match self.incremental_asr.process_chunk(&audio).await {

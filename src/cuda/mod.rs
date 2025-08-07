@@ -58,6 +58,7 @@ pub enum CudaError {
     CudaErrorInvalidValue = 1,
     CudaErrorOutOfMemory = 2,
     CudaErrorUnknown = 3,
+    CudaErrorNotReady = 4,
 }
 
 /// Rust error type for CUDA operations
@@ -89,6 +90,7 @@ impl From<CudaError> for CudaSharedMemoryError {
             CudaError::CudaErrorInvalidValue => CudaSharedMemoryError::InvalidValue,
             CudaError::CudaErrorOutOfMemory => CudaSharedMemoryError::OutOfMemory,
             CudaError::CudaErrorUnknown => CudaSharedMemoryError::Unknown,
+            CudaError::CudaErrorNotReady => CudaSharedMemoryError::Unknown,
         }
     }
 }
@@ -347,6 +349,9 @@ unsafe extern "C" {
         input_buffer_size: usize,
         output_buffer_size: usize,
     ) -> CudaError;
+    fn cuda_region_device_ptr(handle: *mut c_void) -> *mut c_void;
+    fn cuda_region_device_id(handle: *mut c_void) -> c_int;
+    fn cuda_region_size(handle: *mut c_void) -> usize;
 }
 
 /// Safe wrapper for CUDA shared memory region
@@ -573,10 +578,13 @@ impl CudaSharedMemoryRegion {
     /// - The capacity doesn't exceed the actual allocated size
     /// - The memory is properly aligned for type T
     pub unsafe fn as_device_buffer<T: 'static>(&self, capacity: usize) -> DeviceBuffer<T> {
-        // Note: This is a simplified version - in practice you'd need to extract
-        // the actual device pointer from the C handle
-        let ptr = self.handle as *mut T;
-        DeviceBuffer::from_raw_parts(ptr, capacity, 0) // device_id would need to be stored
+        let ptr = cuda_region_device_ptr(self.handle) as *mut T;
+        let device_id = cuda_region_device_id(self.handle);
+        let region_bytes = cuda_region_size(self.handle);
+        let elem_size = std::mem::size_of::<T>();
+        let max_capacity = if elem_size == 0 { 0 } else { region_bytes / elem_size };
+        let len = capacity.min(max_capacity);
+        DeviceBuffer::from_raw_parts(ptr, len, device_id)
     }
     
     /// Run inference with separate input and output regions

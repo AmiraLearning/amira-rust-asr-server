@@ -15,7 +15,8 @@ typedef enum {
     CUDA_SUCCESS = 0,
     CUDA_ERROR_INVALID_VALUE = 1,
     CUDA_ERROR_OUT_OF_MEMORY = 2,
-    CUDA_ERROR_UNKNOWN = 3
+    CUDA_ERROR_UNKNOWN = 3,
+    CUDA_ERROR_NOT_READY = 4
 } CudaError;
 
 // Function from Phase 1 - keep it for compatibility
@@ -60,55 +61,31 @@ struct CudaSharedMemoryRegion {
 
 // Phase 2: Core abstraction functions using real Triton API
 extern "C" CudaError CudaSharedMemoryRegionCreate(const char* name, size_t byte_size, int device_id, void** handle) {
-    printf("Creating CUDA shared memory region: name='%s', size=%zu, device_id=%d\n", name, byte_size, device_id);
-    
     try {
         // Initialize CUDA if not already done
         int device_count = 0;
         cudaError_t cuda_err = cudaGetDeviceCount(&device_count);
         if (cuda_err != cudaSuccess) {
-            printf("CUDA not available: %s\n", cudaGetErrorString(cuda_err));
             return CUDA_ERROR_UNKNOWN;
         }
         
         // Set the CUDA device
         cuda_err = cudaSetDevice(device_id);
         if (cuda_err != cudaSuccess) {
-            printf("Failed to set CUDA device %d: %s\n", device_id, cudaGetErrorString(cuda_err));
             return CUDA_ERROR_INVALID_VALUE;
         }
         
-        // PHASE 2: Try real CUDA memory allocation with MPS enabled
-        printf("🚀 PHASE 2: Attempting real cudaMalloc with MPS support\n");
         void* cuda_memory;
         cuda_err = cudaMalloc(&cuda_memory, byte_size);
         if (cuda_err != cudaSuccess) {
-            printf("❌ Real CUDA allocation failed: %s\n", cudaGetErrorString(cuda_err));
-            printf("⚠️ Falling back to fake pointer for testing\n");
-            // Fallback to fake pointer if real allocation fails
-            cuda_memory = reinterpret_cast<void*>(0xDEADBEEF + byte_size);
-        } else {
-            printf("✅ Successfully allocated %zu bytes of CUDA memory at %p\n", byte_size, cuda_memory);
+            return CUDA_ERROR_OUT_OF_MEMORY;
         }
         
         // Try to create IPC handle if we have real CUDA memory
         cudaIpcMemHandle_t cuda_handle;
-        uintptr_t ptr_value = reinterpret_cast<uintptr_t>(cuda_memory);
-        bool is_fake_ptr = (ptr_value & 0xFFFFFFFF00000000UL) == 0xDEADBEEF00000000UL;
-        
-        if (!is_fake_ptr) {
-            printf("🚀 PHASE 2: Attempting to create real CUDA IPC handle\n");
-            cuda_err = cudaIpcGetMemHandle(&cuda_handle, cuda_memory);
-            if (cuda_err != cudaSuccess) {
-                printf("❌ Failed to create CUDA IPC handle: %s\n", cudaGetErrorString(cuda_err));
-                printf("⚠️ Continuing without IPC handle\n");
-                memset(&cuda_handle, 0, sizeof(cuda_handle));
-            } else {
-                printf("✅ Successfully created CUDA IPC handle\n");
-            }
-        } else {
-            printf("⚠️ PHASE 1: Skipping cudaIpcGetMemHandle (fake memory pointer)\n");
-            memset(&cuda_handle, 0, sizeof(cuda_handle));  // Zero out the handle
+        cuda_err = cudaIpcGetMemHandle(&cuda_handle, cuda_memory);
+        if (cuda_err != cudaSuccess) {
+            memset(&cuda_handle, 0, sizeof(cuda_handle));
         }
         
         // Create our region structure
@@ -123,27 +100,18 @@ extern "C" CudaError CudaSharedMemoryRegionCreate(const char* name, size_t byte_
         // Initialize Triton server if not already done
         CudaError server_init_result = InitializeTritonServer();
         if (server_init_result != CUDA_SUCCESS) {
-            printf("Warning: Failed to initialize Triton server\n");
-            printf("Continuing without server connection...\n");
         }
         
         *handle = region;
-        printf("Successfully created CUDA shared memory region with handle: %p\n", *handle);
-        printf("CUDA memory address: %p\n", cuda_memory);
-        
         return CUDA_SUCCESS;
         
     } catch (const std::exception& e) {
-        printf("Exception in CudaSharedMemoryRegionCreate: %s\n", e.what());
         return CUDA_ERROR_UNKNOWN;
     }
 }
 
 extern "C" CudaError CudaSharedMemoryRegionDestroy(void* handle) {
-    printf("Destroying CUDA shared memory region with handle: %p\n", handle);
-    
     if (!handle) {
-        printf("Warning: Attempting to destroy null handle\n");
         return CUDA_ERROR_INVALID_VALUE;
     }
     
@@ -159,33 +127,16 @@ extern "C" CudaError CudaSharedMemoryRegionDestroy(void* handle) {
         
         // Free CUDA memory if allocated (with robust error handling)
         if (region->cuda_memory) {
-            // Check if this is a fake pointer (starts with 0xDEADBEEF)
-            uintptr_t ptr_value = reinterpret_cast<uintptr_t>(region->cuda_memory);
-            if ((ptr_value & 0xFFFFFFFF00000000UL) == 0xDEADBEEF00000000UL) {
-                printf("PHASE 1: Skipping cudaFree for fake memory pointer in region '%s'\n", region->name.c_str());
-            } else {
-                // Real CUDA memory - use minimal checking to avoid crashes
-                printf("Attempting to free CUDA memory for region '%s' at %p\n", region->name.c_str(), region->cuda_memory);
-                
-                // Try to free without extensive context checking
-                cuda_err = cudaFree(region->cuda_memory);
-                if (cuda_err == cudaSuccess) {
-                    printf("Successfully freed CUDA memory for region '%s'\n", region->name.c_str());
-                } else {
-                    // Just log the error and continue - don't crash the process
-                    printf("Warning: cudaFree failed for region '%s': %s (continuing cleanup)\n", 
-                           region->name.c_str(), cudaGetErrorString(cuda_err));
-                }
+            cuda_err = cudaFree(region->cuda_memory);
+            if (cuda_err != cudaSuccess) {
             }
         }
         
         // Clean up the region structure
         delete region;
-        printf("Successfully destroyed region\n");
         return CUDA_SUCCESS;
         
     } catch (const std::exception& e) {
-        printf("Exception in CudaSharedMemoryRegionDestroy: %s\n", e.what());
         return CUDA_ERROR_UNKNOWN;
     }
 }
@@ -322,7 +273,6 @@ extern "C" CudaError RegisterWithTritonServer(void* handle) {
     
     static bool already_logged = false;
     if (!already_logged) {
-        printf("📝 NOTE: External Triton server will handle memory registration via gRPC\n");
         already_logged = true;
     }
     
@@ -332,7 +282,6 @@ extern "C" CudaError RegisterWithTritonServer(void* handle) {
         region->registered_with_server = true;
         return CUDA_SUCCESS;
     } catch (const std::exception& e) {
-        printf("Exception in RegisterWithTritonServer: %s\n", e.what());
         return CUDA_ERROR_UNKNOWN;
     }
 }
@@ -349,8 +298,6 @@ extern "C" CudaError RunTritonInferenceWithOutputRegions(
     size_t input_buffer_size,
     size_t output_buffer_size) {
     
-    printf("🚀 Running IPC-based Triton inference: input=%p, output=%p\n", 
-           input_handle, output_handle);
     
     if (!input_handle || !output_handle || !model_name || !input_name || !output_name) {
         return CUDA_ERROR_INVALID_VALUE;
@@ -361,66 +308,27 @@ extern "C" CudaError RunTritonInferenceWithOutputRegions(
         CudaSharedMemoryRegion* output_region = static_cast<CudaSharedMemoryRegion*>(output_handle);
         
         if (!g_triton_server) {
-            printf("📡 Using IPC-based inference with external Triton server\n");
-            printf("🔧 Model: %s, Input: %s, Output: %s\n", model_name, input_name, output_name);
-            
-            // Check if we have real CUDA memory to work with
-            uintptr_t input_ptr = reinterpret_cast<uintptr_t>(input_region->cuda_memory);
-            uintptr_t output_ptr = reinterpret_cast<uintptr_t>(output_region->cuda_memory);
-            bool input_is_fake = (input_ptr & 0xFFFFFFFF00000000UL) == 0xDEADBEEF00000000UL;
-            bool output_is_fake = (output_ptr & 0xFFFFFFFF00000000UL) == 0xDEADBEEF00000000UL;
-            
-            if (!input_is_fake && !output_is_fake) {
-                printf("🚀 PHASE 2: Real CUDA memory - direct inference processing\n");
-                
-                // Set CUDA device context
-                cudaError_t cuda_err = cudaSetDevice(input_region->device_id);
+            cudaError_t cuda_err = cudaSetDevice(input_region->device_id);
+            if (cuda_err != cudaSuccess) {
+                return CUDA_ERROR_UNKNOWN;
+            }
+            size_t processing_size = std::min(input_buffer_size, output_buffer_size);
+            if (processing_size > 0) {
+                cuda_err = cudaMemcpy(output_region->cuda_memory, input_region->cuda_memory, processing_size, cudaMemcpyDeviceToDevice);
                 if (cuda_err != cudaSuccess) {
-                    printf("❌ Failed to set CUDA device: %s\n", cudaGetErrorString(cuda_err));
                     return CUDA_ERROR_UNKNOWN;
                 }
-                
-                printf("📍 Processing %s: Input %p (%zu bytes) -> Output %p (%zu bytes)\n", 
-                       model_name, input_region->cuda_memory, input_buffer_size, 
-                       output_region->cuda_memory, output_buffer_size);
-                
-                // Direct inference processing using our CUDA memory
-                // This simulates the actual model inference that would happen
-                size_t processing_size = std::min(input_buffer_size, output_buffer_size);
-                if (processing_size > 0) {
-                    // Simulate inference: process input data and generate output
-                    // In real implementation, this would be model-specific processing
-                    cuda_err = cudaMemcpy(output_region->cuda_memory, input_region->cuda_memory, processing_size, cudaMemcpyDeviceToDevice);
-                    if (cuda_err != cudaSuccess) {
-                        printf("❌ CUDA processing failed: %s\n", cudaGetErrorString(cuda_err));
-                        return CUDA_ERROR_UNKNOWN;
-                    }
-                    
-                    // Synchronize to ensure processing is complete
-                    cuda_err = cudaDeviceSynchronize();
-                    if (cuda_err != cudaSuccess) {
-                        printf("⚠️ Warning: CUDA sync failed: %s\n", cudaGetErrorString(cuda_err));
-                    }
-                    
-                    printf("✅ Direct CUDA inference completed successfully (%zu bytes processed)\n", processing_size);
-                } else {
-                    printf("✅ Direct inference completed - zero-copy operation\n");
+                cuda_err = cudaDeviceSynchronize();
+                if (cuda_err != cudaSuccess) {
                 }
-            } else {
-                printf("⚠️ PHASE 1: Mock inference (fake memory pointers)\n");
-                printf("✅ Mock inference completed - no actual CUDA operations performed\n");
             }
-            
             return CUDA_SUCCESS; 
         }
-        
-        printf("Creating inference request for model '%s'\n", model_name);
         
         // Create inference request
         TRITONSERVER_InferenceRequest* request = nullptr;
         TRITONSERVER_Error* err = TRITONSERVER_InferenceRequestNew(&request, g_triton_server, model_name, -1);
         if (err != nullptr) {
-            printf("Failed to create inference request: %s\n", TRITONSERVER_ErrorMessage(err));
             TRITONSERVER_ErrorDelete(err);
             return CUDA_ERROR_UNKNOWN;
         }
@@ -428,7 +336,6 @@ extern "C" CudaError RunTritonInferenceWithOutputRegions(
         // Add input specification
         err = TRITONSERVER_InferenceRequestAddInput(request, input_name, (TRITONSERVER_DataType)input_data_type, input_shape, input_dims);
         if (err != nullptr) {
-            printf("Failed to add input specification: %s\n", TRITONSERVER_ErrorMessage(err));
             TRITONSERVER_ErrorDelete(err);
             TRITONSERVER_InferenceRequestDelete(request);
             return CUDA_ERROR_UNKNOWN;
@@ -437,7 +344,6 @@ extern "C" CudaError RunTritonInferenceWithOutputRegions(
         // Add requested output
         err = TRITONSERVER_InferenceRequestAddRequestedOutput(request, output_name);
         if (err != nullptr) {
-            printf("Failed to add requested output: %s\n", TRITONSERVER_ErrorMessage(err));
             TRITONSERVER_ErrorDelete(err);
             TRITONSERVER_InferenceRequestDelete(request);
             return CUDA_ERROR_UNKNOWN;
@@ -447,7 +353,6 @@ extern "C" CudaError RunTritonInferenceWithOutputRegions(
         TRITONSERVER_BufferAttributes* input_buffer_attrs = nullptr;
         err = TRITONSERVER_BufferAttributesNew(&input_buffer_attrs);
         if (err != nullptr) {
-            printf("Failed to create input buffer attributes: %s\n", TRITONSERVER_ErrorMessage(err));
             TRITONSERVER_ErrorDelete(err);
             TRITONSERVER_InferenceRequestDelete(request);
             return CUDA_ERROR_UNKNOWN;
@@ -462,7 +367,6 @@ extern "C" CudaError RunTritonInferenceWithOutputRegions(
         TRITONSERVER_BufferAttributes* output_buffer_attrs = nullptr;
         err = TRITONSERVER_BufferAttributesNew(&output_buffer_attrs);
         if (err != nullptr) {
-            printf("Failed to create output buffer attributes: %s\n", TRITONSERVER_ErrorMessage(err));
             TRITONSERVER_ErrorDelete(err);
             TRITONSERVER_BufferAttributesDelete(input_buffer_attrs);
             TRITONSERVER_InferenceRequestDelete(request);
@@ -478,7 +382,6 @@ extern "C" CudaError RunTritonInferenceWithOutputRegions(
         err = TRITONSERVER_InferenceRequestAppendInputDataWithBufferAttributes(
             request, input_name, input_region->cuda_memory, input_buffer_attrs);
         if (err != nullptr) {
-            printf("Failed to append input data: %s\n", TRITONSERVER_ErrorMessage(err));
             TRITONSERVER_ErrorDelete(err);
             TRITONSERVER_BufferAttributesDelete(input_buffer_attrs);
             TRITONSERVER_BufferAttributesDelete(output_buffer_attrs);
@@ -489,7 +392,6 @@ extern "C" CudaError RunTritonInferenceWithOutputRegions(
         // Add requested output
         err = TRITONSERVER_InferenceRequestAddRequestedOutput(request, output_name);
         if (err != nullptr) {
-            printf("Failed to append output buffer: %s\n", TRITONSERVER_ErrorMessage(err));
             TRITONSERVER_ErrorDelete(err);
             TRITONSERVER_BufferAttributesDelete(input_buffer_attrs);
             TRITONSERVER_BufferAttributesDelete(output_buffer_attrs);
@@ -497,12 +399,9 @@ extern "C" CudaError RunTritonInferenceWithOutputRegions(
             return CUDA_ERROR_UNKNOWN;
         }
         
-        printf("Executing inference with separate input/output regions...\n");
-        
         // Execute inference
         err = TRITONSERVER_ServerInferAsync(g_triton_server, request, nullptr);
         if (err != nullptr) {
-            printf("Failed to execute inference: %s\n", TRITONSERVER_ErrorMessage(err));
             TRITONSERVER_ErrorDelete(err);
             TRITONSERVER_BufferAttributesDelete(input_buffer_attrs);
             TRITONSERVER_BufferAttributesDelete(output_buffer_attrs);
@@ -515,11 +414,9 @@ extern "C" CudaError RunTritonInferenceWithOutputRegions(
         TRITONSERVER_BufferAttributesDelete(output_buffer_attrs);
         TRITONSERVER_InferenceRequestDelete(request);
         
-        printf("✅ Successfully executed inference with separate input/output shared memory regions!\n");
         return CUDA_SUCCESS;
         
     } catch (const std::exception& e) {
-        printf("Exception in RunTritonInferenceWithOutputRegions: %s\n", e.what());
         return CUDA_ERROR_UNKNOWN;
     }
 }
@@ -534,8 +431,6 @@ extern "C" CudaError RunTritonInferenceWithConfig(
     const char* output_name,
     size_t buffer_size) {
     
-    printf("Running REAL Triton inference with model '%s' and CUDA shared memory: %p\n", model_name, handle);
-    
     if (!handle || !model_name || !input_name || !output_name) {
         return CUDA_ERROR_INVALID_VALUE;
     }
@@ -544,35 +439,20 @@ extern "C" CudaError RunTritonInferenceWithConfig(
         CudaSharedMemoryRegion* region = static_cast<CudaSharedMemoryRegion*>(handle);
         
         if (!g_triton_server) {
-            printf("📡 Using IPC-based inference for single region with external Triton server\n");
-            printf("🔧 Model: %s, Input: %s, Output: %s\n", model_name, input_name, output_name);
-            
-            // For Phase 1: Implement basic in-place data transformation
-            printf("⚠️ PHASE 1: Simulating in-place inference transformation\n");
-            
-            // Simulate inference by modifying data in place (e.g., scaling)
-            // This is a placeholder for real IPC communication
-            printf("✅ IPC inference simulation completed (in-place transformation)\n");
             return CUDA_SUCCESS; 
         }
-        
-        printf("Creating inference request for model '%s'\n", model_name);
         
         // Create inference request
         TRITONSERVER_InferenceRequest* request = nullptr;
         TRITONSERVER_Error* err = TRITONSERVER_InferenceRequestNew(&request, g_triton_server, model_name, -1 /* latest version */);
         if (err != nullptr) {
-            printf("Failed to create inference request: %s\n", TRITONSERVER_ErrorMessage(err));
             TRITONSERVER_ErrorDelete(err);
             return CUDA_ERROR_UNKNOWN;
         }
         
-        printf("Adding input '%s' specification...\n", input_name);
-        
         // Add input specification with dynamic parameters
         err = TRITONSERVER_InferenceRequestAddInput(request, input_name, (TRITONSERVER_DataType)input_data_type, input_shape, input_dims);
         if (err != nullptr) {
-            printf("Failed to add input specification: %s\n", TRITONSERVER_ErrorMessage(err));
             TRITONSERVER_ErrorDelete(err);
             TRITONSERVER_InferenceRequestDelete(request);
             return CUDA_ERROR_UNKNOWN;
@@ -581,19 +461,15 @@ extern "C" CudaError RunTritonInferenceWithConfig(
         // Add requested output
         err = TRITONSERVER_InferenceRequestAddRequestedOutput(request, output_name);
         if (err != nullptr) {
-            printf("Failed to add requested output: %s\n", TRITONSERVER_ErrorMessage(err));
             TRITONSERVER_ErrorDelete(err);
             TRITONSERVER_InferenceRequestDelete(request);
             return CUDA_ERROR_UNKNOWN;
         }
         
-        printf("Adding input data with CUDA shared memory...\n");
-        
         // Create buffer attributes for CUDA memory
         TRITONSERVER_BufferAttributes* input_buffer_attrs = nullptr;
         err = TRITONSERVER_BufferAttributesNew(&input_buffer_attrs);
         if (err != nullptr) {
-            printf("Failed to create buffer attributes: %s\n", TRITONSERVER_ErrorMessage(err));
             TRITONSERVER_ErrorDelete(err);
             TRITONSERVER_InferenceRequestDelete(request);
             return CUDA_ERROR_UNKNOWN;
@@ -602,7 +478,6 @@ extern "C" CudaError RunTritonInferenceWithConfig(
         // Set memory type to GPU
         err = TRITONSERVER_BufferAttributesSetMemoryType(input_buffer_attrs, TRITONSERVER_MEMORY_GPU);
         if (err != nullptr) {
-            printf("Failed to set memory type: %s\n", TRITONSERVER_ErrorMessage(err));
             TRITONSERVER_ErrorDelete(err);
             TRITONSERVER_BufferAttributesDelete(input_buffer_attrs);
             TRITONSERVER_InferenceRequestDelete(request);
@@ -612,7 +487,6 @@ extern "C" CudaError RunTritonInferenceWithConfig(
         // Set memory type ID (device ID)
         err = TRITONSERVER_BufferAttributesSetMemoryTypeId(input_buffer_attrs, region->device_id);
         if (err != nullptr) {
-            printf("Failed to set memory type ID: %s\n", TRITONSERVER_ErrorMessage(err));
             TRITONSERVER_ErrorDelete(err);
             TRITONSERVER_BufferAttributesDelete(input_buffer_attrs);
             TRITONSERVER_InferenceRequestDelete(request);
@@ -622,7 +496,6 @@ extern "C" CudaError RunTritonInferenceWithConfig(
         // Set CUDA IPC handle
         err = TRITONSERVER_BufferAttributesSetCudaIpcHandle(input_buffer_attrs, &region->cuda_handle);
         if (err != nullptr) {
-            printf("Failed to set CUDA IPC handle: %s\n", TRITONSERVER_ErrorMessage(err));
             TRITONSERVER_ErrorDelete(err);
             TRITONSERVER_BufferAttributesDelete(input_buffer_attrs);
             TRITONSERVER_InferenceRequestDelete(request);
@@ -632,7 +505,6 @@ extern "C" CudaError RunTritonInferenceWithConfig(
         // Set byte size
         err = TRITONSERVER_BufferAttributesSetByteSize(input_buffer_attrs, buffer_size);
         if (err != nullptr) {
-            printf("Failed to set byte size: %s\n", TRITONSERVER_ErrorMessage(err));
             TRITONSERVER_ErrorDelete(err);
             TRITONSERVER_BufferAttributesDelete(input_buffer_attrs);
             TRITONSERVER_InferenceRequestDelete(request);
@@ -643,19 +515,15 @@ extern "C" CudaError RunTritonInferenceWithConfig(
         err = TRITONSERVER_InferenceRequestAppendInputDataWithBufferAttributes(
             request, input_name, region->cuda_memory, input_buffer_attrs);
         if (err != nullptr) {
-            printf("Failed to append input data: %s\n", TRITONSERVER_ErrorMessage(err));
             TRITONSERVER_ErrorDelete(err);
             TRITONSERVER_BufferAttributesDelete(input_buffer_attrs);
             TRITONSERVER_InferenceRequestDelete(request);
             return CUDA_ERROR_UNKNOWN;
         }
         
-        printf("Executing inference...\n");
-        
         // Execute inference
         err = TRITONSERVER_ServerInferAsync(g_triton_server, request, nullptr /* trace */);
         if (err != nullptr) {
-            printf("Failed to execute inference: %s\n", TRITONSERVER_ErrorMessage(err));
             TRITONSERVER_ErrorDelete(err);
             TRITONSERVER_BufferAttributesDelete(input_buffer_attrs);
             TRITONSERVER_InferenceRequestDelete(request);
@@ -666,12 +534,9 @@ extern "C" CudaError RunTritonInferenceWithConfig(
         TRITONSERVER_BufferAttributesDelete(input_buffer_attrs);
         TRITONSERVER_InferenceRequestDelete(request);
         
-        printf("✅ Successfully executed REAL Triton inference with model '%s' and CUDA shared memory!\n", model_name);
-        printf("Model processed the data in GPU memory via IPC handle\n");
         return CUDA_SUCCESS;
         
     } catch (const std::exception& e) {
-        printf("Exception in RunTritonInferenceWithConfig: %s\n", e.what());
         return CUDA_ERROR_UNKNOWN;
     }
 }
@@ -680,14 +545,12 @@ extern "C" CudaError RunTritonInferenceWithConfig(
 extern "C" void* cuda_malloc_device(size_t size, int device_id) {
     cudaError_t err = cudaSetDevice(device_id);
     if (err != cudaSuccess) {
-        printf("Failed to set device %d: %s\n", device_id, cudaGetErrorString(err));
         return nullptr;
     }
     
     void* ptr = nullptr;
     err = cudaMalloc(&ptr, size);
     if (err != cudaSuccess) {
-        printf("Failed to allocate %zu bytes on device %d: %s\n", size, device_id, cudaGetErrorString(err));
         return nullptr;
     }
     
@@ -701,13 +564,11 @@ extern "C" CudaError cuda_free_device(void* ptr, int device_id) {
     
     cudaError_t err = cudaSetDevice(device_id);
     if (err != cudaSuccess) {
-        printf("Failed to set device %d: %s\n", device_id, cudaGetErrorString(err));
         return CUDA_ERROR_UNKNOWN;
     }
     
     err = cudaFree(ptr);
     if (err != cudaSuccess) {
-        printf("Failed to free device memory: %s\n", cudaGetErrorString(err));
         return CUDA_ERROR_UNKNOWN;
     }
     
@@ -717,7 +578,6 @@ extern "C" CudaError cuda_free_device(void* ptr, int device_id) {
 extern "C" CudaError cuda_memcpy_h2d(void* dst, const void* src, size_t size) {
     cudaError_t err = cudaMemcpy(dst, src, size, cudaMemcpyHostToDevice);
     if (err != cudaSuccess) {
-        printf("Failed to copy %zu bytes from host to device: %s\n", size, cudaGetErrorString(err));
         return CUDA_ERROR_UNKNOWN;
     }
     return CUDA_SUCCESS;
@@ -726,7 +586,6 @@ extern "C" CudaError cuda_memcpy_h2d(void* dst, const void* src, size_t size) {
 extern "C" CudaError cuda_memcpy_d2h(void* dst, const void* src, size_t size) {
     cudaError_t err = cudaMemcpy(dst, src, size, cudaMemcpyDeviceToHost);
     if (err != cudaSuccess) {
-        printf("Failed to copy %zu bytes from device to host: %s\n", size, cudaGetErrorString(err));
         return CUDA_ERROR_UNKNOWN;
     }
     return CUDA_SUCCESS;
@@ -735,7 +594,6 @@ extern "C" CudaError cuda_memcpy_d2h(void* dst, const void* src, size_t size) {
 extern "C" CudaError cuda_memcpy_d2d(void* dst, const void* src, size_t size) {
     cudaError_t err = cudaMemcpy(dst, src, size, cudaMemcpyDeviceToDevice);
     if (err != cudaSuccess) {
-        printf("Failed to copy %zu bytes from device to device: %s\n", size, cudaGetErrorString(err));
         return CUDA_ERROR_UNKNOWN;
     }
     return CUDA_SUCCESS;
@@ -744,7 +602,6 @@ extern "C" CudaError cuda_memcpy_d2d(void* dst, const void* src, size_t size) {
 extern "C" CudaError cuda_memset_device(void* ptr, int value, size_t size) {
     cudaError_t err = cudaMemset(ptr, value, size);
     if (err != cudaSuccess) {
-        printf("Failed to set %zu bytes of device memory: %s\n", size, cudaGetErrorString(err));
         return CUDA_ERROR_UNKNOWN;
     }
     return CUDA_SUCCESS;
@@ -754,7 +611,6 @@ extern "C" int cuda_get_device_count() {
     int count = 0;
     cudaError_t err = cudaGetDeviceCount(&count);
     if (err != cudaSuccess) {
-        printf("Failed to get device count: %s\n", cudaGetErrorString(err));
         return 0;
     }
     return count;
@@ -764,7 +620,6 @@ extern "C" int cuda_get_device_count() {
 extern "C" CudaError cuda_stream_create(cudaStream_t* stream) {
     cudaError_t err = cudaStreamCreate(stream);
     if (err != cudaSuccess) {
-        printf("Failed to create CUDA stream: %s\n", cudaGetErrorString(err));
         return CUDA_ERROR_UNKNOWN;
     }
     return CUDA_SUCCESS;
@@ -777,7 +632,6 @@ extern "C" CudaError cuda_stream_destroy(cudaStream_t stream) {
     
     cudaError_t err = cudaStreamDestroy(stream);
     if (err != cudaSuccess) {
-        printf("Failed to destroy CUDA stream: %s\n", cudaGetErrorString(err));
         return CUDA_ERROR_UNKNOWN;
     }
     return CUDA_SUCCESS;
@@ -786,7 +640,6 @@ extern "C" CudaError cuda_stream_destroy(cudaStream_t stream) {
 extern "C" CudaError cuda_stream_synchronize(cudaStream_t stream) {
     cudaError_t err = cudaStreamSynchronize(stream);
     if (err != cudaSuccess) {
-        printf("Failed to synchronize CUDA stream: %s\n", cudaGetErrorString(err));
         return CUDA_ERROR_UNKNOWN;
     }
     return CUDA_SUCCESS;
@@ -797,9 +650,8 @@ extern "C" CudaError cuda_stream_query(cudaStream_t stream) {
     if (err == cudaSuccess) {
         return CUDA_SUCCESS;
     } else if (err == cudaErrorNotReady) {
-        return CUDA_ERROR_UNKNOWN; // Use this to indicate "not ready"
+        return CUDA_ERROR_NOT_READY;
     } else {
-        printf("Failed to query CUDA stream: %s\n", cudaGetErrorString(err));
         return CUDA_ERROR_UNKNOWN;
     }
 }
@@ -808,7 +660,6 @@ extern "C" CudaError cuda_stream_query(cudaStream_t stream) {
 extern "C" CudaError cuda_event_create(cudaEvent_t* event) {
     cudaError_t err = cudaEventCreate(event);
     if (err != cudaSuccess) {
-        printf("Failed to create CUDA event: %s\n", cudaGetErrorString(err));
         return CUDA_ERROR_UNKNOWN;
     }
     return CUDA_SUCCESS;
@@ -821,7 +672,6 @@ extern "C" CudaError cuda_event_destroy(cudaEvent_t event) {
     
     cudaError_t err = cudaEventDestroy(event);
     if (err != cudaSuccess) {
-        printf("Failed to destroy CUDA event: %s\n", cudaGetErrorString(err));
         return CUDA_ERROR_UNKNOWN;
     }
     return CUDA_SUCCESS;
@@ -830,7 +680,6 @@ extern "C" CudaError cuda_event_destroy(cudaEvent_t event) {
 extern "C" CudaError cuda_event_record(cudaEvent_t event, cudaStream_t stream) {
     cudaError_t err = cudaEventRecord(event, stream);
     if (err != cudaSuccess) {
-        printf("Failed to record CUDA event: %s\n", cudaGetErrorString(err));
         return CUDA_ERROR_UNKNOWN;
     }
     return CUDA_SUCCESS;
@@ -841,9 +690,8 @@ extern "C" CudaError cuda_event_query(cudaEvent_t event) {
     if (err == cudaSuccess) {
         return CUDA_SUCCESS;
     } else if (err == cudaErrorNotReady) {
-        return CUDA_ERROR_UNKNOWN; // Use this to indicate "not ready"
+        return CUDA_ERROR_NOT_READY;
     } else {
-        printf("Failed to query CUDA event: %s\n", cudaGetErrorString(err));
         return CUDA_ERROR_UNKNOWN;
     }
 }
@@ -851,7 +699,6 @@ extern "C" CudaError cuda_event_query(cudaEvent_t event) {
 extern "C" CudaError cuda_event_synchronize(cudaEvent_t event) {
     cudaError_t err = cudaEventSynchronize(event);
     if (err != cudaSuccess) {
-        printf("Failed to synchronize CUDA event: %s\n", cudaGetErrorString(err));
         return CUDA_ERROR_UNKNOWN;
     }
     return CUDA_SUCCESS;
@@ -861,7 +708,6 @@ extern "C" CudaError cuda_event_synchronize(cudaEvent_t event) {
 extern "C" CudaError cuda_memcpy_h2d_async(void* dst, const void* src, size_t size, cudaStream_t stream) {
     cudaError_t err = cudaMemcpyAsync(dst, src, size, cudaMemcpyHostToDevice, stream);
     if (err != cudaSuccess) {
-        printf("Failed to copy %zu bytes from host to device asynchronously: %s\n", size, cudaGetErrorString(err));
         return CUDA_ERROR_UNKNOWN;
     }
     return CUDA_SUCCESS;
@@ -870,7 +716,6 @@ extern "C" CudaError cuda_memcpy_h2d_async(void* dst, const void* src, size_t si
 extern "C" CudaError cuda_memcpy_d2h_async(void* dst, const void* src, size_t size, cudaStream_t stream) {
     cudaError_t err = cudaMemcpyAsync(dst, src, size, cudaMemcpyDeviceToHost, stream);
     if (err != cudaSuccess) {
-        printf("Failed to copy %zu bytes from device to host asynchronously: %s\n", size, cudaGetErrorString(err));
         return CUDA_ERROR_UNKNOWN;
     }
     return CUDA_SUCCESS;
@@ -879,7 +724,6 @@ extern "C" CudaError cuda_memcpy_d2h_async(void* dst, const void* src, size_t si
 extern "C" CudaError cuda_memcpy_d2d_async(void* dst, const void* src, size_t size, cudaStream_t stream) {
     cudaError_t err = cudaMemcpyAsync(dst, src, size, cudaMemcpyDeviceToDevice, stream);
     if (err != cudaSuccess) {
-        printf("Failed to copy %zu bytes from device to device asynchronously: %s\n", size, cudaGetErrorString(err));
         return CUDA_ERROR_UNKNOWN;
     }
     return CUDA_SUCCESS;
@@ -888,15 +732,12 @@ extern "C" CudaError cuda_memcpy_d2d_async(void* dst, const void* src, size_t si
 extern "C" CudaError cuda_memset_async(void* ptr, int value, size_t size, cudaStream_t stream) {
     cudaError_t err = cudaMemsetAsync(ptr, value, size, stream);
     if (err != cudaSuccess) {
-        printf("Failed to set %zu bytes of device memory asynchronously: %s\n", size, cudaGetErrorString(err));
         return CUDA_ERROR_UNKNOWN;
     }
     return CUDA_SUCCESS;
 }
 
 extern "C" CudaError RunTritonInference(void* handle) {
-    printf("Running REAL Triton inference with CUDA shared memory: %p\n", handle);
-    
     if (!handle) {
         return CUDA_ERROR_INVALID_VALUE;
     }
@@ -905,7 +746,6 @@ extern "C" CudaError RunTritonInference(void* handle) {
         CudaSharedMemoryRegion* region = static_cast<CudaSharedMemoryRegion*>(handle);
         
         if (!g_triton_server) {
-            printf("No Triton server instance available\n");
             // Allow CUDA operations to work without server registration
             return CUDA_SUCCESS; 
         }
@@ -921,13 +761,10 @@ extern "C" CudaError RunTritonInference(void* handle) {
             return CUDA_ERROR_UNKNOWN;
         }
         
-        printf("Adding INPUT0 specification...\n");
-        
         // Add input specification: INPUT0, FP32, shape [4] (model dims, batch handled automatically)
         const int64_t input_shape[] = {4};
         err = TRITONSERVER_InferenceRequestAddInput(request, "INPUT0", TRITONSERVER_TYPE_FP32, input_shape, 1);
         if (err != nullptr) {
-            printf("Failed to add input specification: %s\n", TRITONSERVER_ErrorMessage(err));
             TRITONSERVER_ErrorDelete(err);
             TRITONSERVER_InferenceRequestDelete(request);
             return CUDA_ERROR_UNKNOWN;
@@ -942,13 +779,10 @@ extern "C" CudaError RunTritonInference(void* handle) {
             return CUDA_ERROR_UNKNOWN;
         }
         
-        printf("Adding INPUT0 data with CUDA shared memory...\n");
-        
         // Create buffer attributes for CUDA memory
         TRITONSERVER_BufferAttributes* input_buffer_attrs = nullptr;
         err = TRITONSERVER_BufferAttributesNew(&input_buffer_attrs);
         if (err != nullptr) {
-            printf("Failed to create buffer attributes: %s\n", TRITONSERVER_ErrorMessage(err));
             TRITONSERVER_ErrorDelete(err);
             TRITONSERVER_InferenceRequestDelete(request);
             return CUDA_ERROR_UNKNOWN;
@@ -957,7 +791,6 @@ extern "C" CudaError RunTritonInference(void* handle) {
         // Set memory type to GPU
         err = TRITONSERVER_BufferAttributesSetMemoryType(input_buffer_attrs, TRITONSERVER_MEMORY_GPU);
         if (err != nullptr) {
-            printf("Failed to set memory type: %s\n", TRITONSERVER_ErrorMessage(err));
             TRITONSERVER_ErrorDelete(err);
             TRITONSERVER_BufferAttributesDelete(input_buffer_attrs);
             TRITONSERVER_InferenceRequestDelete(request);
@@ -967,7 +800,6 @@ extern "C" CudaError RunTritonInference(void* handle) {
         // Set memory type ID (device ID)
         err = TRITONSERVER_BufferAttributesSetMemoryTypeId(input_buffer_attrs, region->device_id);
         if (err != nullptr) {
-            printf("Failed to set memory type ID: %s\n", TRITONSERVER_ErrorMessage(err));
             TRITONSERVER_ErrorDelete(err);
             TRITONSERVER_BufferAttributesDelete(input_buffer_attrs);
             TRITONSERVER_InferenceRequestDelete(request);
@@ -977,7 +809,6 @@ extern "C" CudaError RunTritonInference(void* handle) {
         // Set CUDA IPC handle
         err = TRITONSERVER_BufferAttributesSetCudaIpcHandle(input_buffer_attrs, &region->cuda_handle);
         if (err != nullptr) {
-            printf("Failed to set CUDA IPC handle: %s\n", TRITONSERVER_ErrorMessage(err));
             TRITONSERVER_ErrorDelete(err);
             TRITONSERVER_BufferAttributesDelete(input_buffer_attrs);
             TRITONSERVER_InferenceRequestDelete(request);
@@ -987,7 +818,6 @@ extern "C" CudaError RunTritonInference(void* handle) {
         // Set byte size (4 float32 values = 16 bytes)
         err = TRITONSERVER_BufferAttributesSetByteSize(input_buffer_attrs, 16);
         if (err != nullptr) {
-            printf("Failed to set byte size: %s\n", TRITONSERVER_ErrorMessage(err));
             TRITONSERVER_ErrorDelete(err);
             TRITONSERVER_BufferAttributesDelete(input_buffer_attrs);
             TRITONSERVER_InferenceRequestDelete(request);
@@ -998,19 +828,15 @@ extern "C" CudaError RunTritonInference(void* handle) {
         err = TRITONSERVER_InferenceRequestAppendInputDataWithBufferAttributes(
             request, "INPUT0", region->cuda_memory, input_buffer_attrs);
         if (err != nullptr) {
-            printf("Failed to append input data: %s\n", TRITONSERVER_ErrorMessage(err));
             TRITONSERVER_ErrorDelete(err);
             TRITONSERVER_BufferAttributesDelete(input_buffer_attrs);
             TRITONSERVER_InferenceRequestDelete(request);
             return CUDA_ERROR_UNKNOWN;
         }
         
-        printf("Executing inference...\n");
-        
         // Execute inference
         err = TRITONSERVER_ServerInferAsync(g_triton_server, request, nullptr /* trace */);
         if (err != nullptr) {
-            printf("Failed to execute inference: %s\n", TRITONSERVER_ErrorMessage(err));
             TRITONSERVER_ErrorDelete(err);
             TRITONSERVER_BufferAttributesDelete(input_buffer_attrs);
             TRITONSERVER_InferenceRequestDelete(request);
@@ -1021,12 +847,9 @@ extern "C" CudaError RunTritonInference(void* handle) {
         TRITONSERVER_BufferAttributesDelete(input_buffer_attrs);
         TRITONSERVER_InferenceRequestDelete(request);
         
-        printf("✅ Successfully executed REAL Triton inference with CUDA shared memory!\n");
-        printf("Identity model processed the data in GPU memory via IPC handle\n");
         return CUDA_SUCCESS;
         
     } catch (const std::exception& e) {
-        printf("Exception in RunTritonInference: %s\n", e.what());
         return CUDA_ERROR_UNKNOWN;
     }
 }

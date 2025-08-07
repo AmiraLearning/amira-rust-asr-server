@@ -223,6 +223,9 @@ impl<T: 'static> DeviceBuffer<T> {
             return Ok(());
         }
 
+        if stream.device_id() != self.device_id {
+            return Err(CudaSharedMemoryError::InvalidValue);
+        }
         stream.enqueue_memcpy_h2d(self.ptr, src)?;
         self.len = src.len();
         Ok(())
@@ -270,6 +273,9 @@ impl<T: 'static> DeviceBuffer<T> {
             return Ok(());
         }
 
+        if stream.device_id() != self.device_id {
+            return Err(CudaSharedMemoryError::InvalidValue);
+        }
         stream.enqueue_memcpy_d2h(dst, self.ptr)?;
         Ok(())
     }
@@ -319,6 +325,9 @@ impl<T: 'static> DeviceBuffer<T> {
             return Ok(());
         }
 
+        if stream.device_id() != self.device_id || stream.device_id() != src.device_id {
+            return Err(CudaSharedMemoryError::InvalidValue);
+        }
         stream.enqueue_memcpy_d2d(self.ptr, src.ptr, src.len())?;
         self.len = src.len();
         Ok(())

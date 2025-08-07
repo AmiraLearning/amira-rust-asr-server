@@ -63,7 +63,8 @@ impl AsyncCudaStream {
     
     /// Check if stream operations are complete (non-blocking)
     pub fn is_ready(&self) -> bool {
-        unsafe { cuda_stream_query(self.stream) == CudaError::CudaSuccess }
+        let status = unsafe { cuda_stream_query(self.stream) };
+        matches!(status, CudaError::CudaSuccess)
     }
     
     /// Synchronize the stream (blocking)
@@ -301,7 +302,7 @@ impl Future for StreamWaiter {
     
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         // Check if stream is already complete
-        if self.stream.query_stream() == CudaError::CudaSuccess {
+        if matches!(self.stream.query_stream(), CudaError::CudaSuccess) {
             return Poll::Ready(Ok(()));
         }
         
@@ -314,7 +315,7 @@ impl Future for StreamWaiter {
             tokio::spawn(async move {
                 // Poll in a loop until complete
                 loop {
-                    if stream.query_stream() == CudaError::CudaSuccess {
+                    if matches!(stream.query_stream(), CudaError::CudaSuccess) {
                         let _ = tx.send(Ok(()));
                         waker.wake();
                         break;
@@ -357,7 +358,7 @@ impl Future for EventWaiter {
     
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         // Check if event is already complete
-        if self.event.query_event() == CudaError::CudaSuccess {
+        if matches!(self.event.query_event(), CudaError::CudaSuccess) {
             return Poll::Ready(Ok(()));
         }
         
@@ -370,7 +371,7 @@ impl Future for EventWaiter {
             tokio::spawn(async move {
                 // Poll in a loop until complete
                 loop {
-                    if event.query_event() == CudaError::CudaSuccess {
+                    if matches!(event.query_event(), CudaError::CudaSuccess) {
                         let _ = tx.send(Ok(()));
                         waker.wake();
                         break;
