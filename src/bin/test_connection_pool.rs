@@ -8,7 +8,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
 use tracing::{info, warn};
-use tracing_subscriber;
 
 #[derive(Clone)]
 struct MockTritonServer {

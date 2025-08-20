@@ -170,7 +170,7 @@ impl TritonAsrPipeline {
         let preprocessor_output = {
             let mut connection = pooled_connection.client_mut().client_mut().await;
             self.preprocessor
-                .infer_zero_copy(&mut *connection, preprocessor_input)
+                .infer_zero_copy(&mut connection, preprocessor_input)
                 .await?
         };
         info!(
@@ -187,7 +187,7 @@ impl TritonAsrPipeline {
         debug!("Calling encoder...");
         let encoder_output = {
             let mut connection = pooled_connection.client_mut().client_mut().await;
-            self.encoder.infer(&mut *connection, encoder_input).await?
+            self.encoder.infer(&mut connection, encoder_input).await?
         };
         info!(
             "Encoder complete: encoded_len={}",
@@ -223,7 +223,7 @@ impl TritonAsrPipeline {
             async move {
                 let output = {
                     let mut client_guard = client.client_mut().await;
-                    decoder.infer(&mut *client_guard, input).await?
+                    decoder.infer(&mut client_guard, input).await?
                 };
 
                 let new_state = DecoderState {
@@ -286,7 +286,7 @@ impl TritonAsrPipeline {
         let preprocessor_output = {
             let mut connection = pooled_connection.client_mut().client_mut().await;
             self.preprocessor
-                .infer_zero_copy(&mut *connection, preprocessor_input)
+                .infer_zero_copy(&mut connection, preprocessor_input)
                 .await?
         };
         info!(
@@ -303,7 +303,7 @@ impl TritonAsrPipeline {
         debug!("Calling encoder...");
         let encoder_output = {
             let mut connection = pooled_connection.client_mut().client_mut().await;
-            self.encoder.infer(&mut *connection, encoder_input).await?
+            self.encoder.infer(&mut connection, encoder_input).await?
         };
         info!(
             "Encoder complete: encoded_len={}",
@@ -335,7 +335,7 @@ impl TritonAsrPipeline {
             async move {
                 let output = {
                     let mut client_guard = client.client_mut().await;
-                    decoder.infer(&mut *client_guard, input).await?
+                    decoder.infer(&mut client_guard, input).await?
                 };
 
                 let new_state = DecoderState {
@@ -389,7 +389,7 @@ impl AsrPipeline for TritonAsrPipeline {
         let waveform = self.convert_audio(audio_bytes)?;
 
         // Take ownership of current state to avoid cloning
-        let current_state = std::mem::replace(state, DecoderState::new());
+        let current_state = std::mem::take(state);
         let (transcription, new_state) = self
             .process_audio_zero_copy(&waveform, current_state)
             .await?;
@@ -419,7 +419,7 @@ impl AsrPipeline for TritonAsrPipeline {
         state: &mut DecoderState,
     ) -> Result<Transcription> {
         // Take ownership of current state to avoid cloning
-        let current_state = std::mem::replace(state, DecoderState::new());
+        let current_state = std::mem::take(state);
         let (transcription, new_state) = self
             .process_audio_zero_copy(audio_samples, current_state)
             .await?;

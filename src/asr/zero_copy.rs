@@ -58,10 +58,10 @@ impl<'a> TensorView<'a> {
         }
 
         // Zero-copy extraction: copy feature vector for this time step
-        for feature_idx in 0..features {
+        for (feature_idx, out) in output.iter_mut().enumerate().take(features) {
             let tensor_idx = feature_idx * time_steps + time_step;
             if tensor_idx < self.data.len() {
-                output[feature_idx] = self.data[tensor_idx];
+                *out = self.data[tensor_idx];
             }
         }
 

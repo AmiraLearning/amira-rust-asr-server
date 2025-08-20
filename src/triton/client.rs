@@ -108,10 +108,11 @@ impl InferRequestBuilder {
     /// # Returns
     /// A new inference request builder.
     pub fn new(model_name: &str) -> Self {
-        let mut request = ModelInferRequest::default();
-        request.model_name = model_name.to_string();
-        request.id = Uuid::new_v4().to_string();
-
+        let request = ModelInferRequest {
+            model_name: model_name.to_string(),
+            id: Uuid::new_v4().to_string(),
+            ..Default::default()
+        };
         Self { request }
     }
 

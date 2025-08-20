@@ -301,6 +301,12 @@ impl CircuitBreaker {
     }
 }
 
+impl Default for CircuitBreaker {
+    fn default() -> Self {
+        Self::new(CircuitBreakerConfig::default())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

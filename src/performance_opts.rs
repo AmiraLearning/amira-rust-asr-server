@@ -263,7 +263,7 @@ pub mod matrix {
         debug_assert_eq!(vector.len(), cols);
         debug_assert_eq!(output.len(), rows);
 
-        for i in 0..rows {
+        for (i, out) in output.iter_mut().enumerate().take(rows) {
             let mut sum = 0.0f32;
             let row_start = i * cols;
 
@@ -283,7 +283,7 @@ pub mod matrix {
                 j += 1;
             }
 
-            output[i] = sum;
+            *out = sum;
         }
     }
 }
@@ -629,7 +629,7 @@ mod tests {
 
         // Check that all samples are within [-1.0, 1.0]
         for &sample in &samples {
-            assert!(sample >= -1.0 && sample <= 1.0);
+            assert!((-1.0..=1.0).contains(&sample));
         }
     }
 

@@ -873,11 +873,11 @@ fn smooth_audio_scalar(input: &[f32], output: &mut [f32], window_size: usize) {
         return;
     }
 
-    for i in 0..input.len() {
+    for (i, out) in output.iter_mut().enumerate().take(input.len()) {
         let start = i.saturating_sub(window_size / 2);
         let end = std::cmp::min(start + window_size, input.len());
         let window = &input[start..end];
-        output[i] = window.iter().sum::<f32>() / window.len() as f32;
+        *out = window.iter().sum::<f32>() / window.len() as f32;
     }
 }
 

@@ -16,10 +16,10 @@ use tokio::time::{timeout, Instant};
 /// Result type for async operations.
 pub type AsyncResult<T> = Result<T, AsrError>;
 
-/// Structured concurrency for ASR pipeline processing.
-/// Note: This is currently commented out due to trait object safety issues.
-/// The ModelBackend trait has generic methods which makes it not object-safe.
-// TODO: Reimplement this with concrete types when needed
+// /// Structured concurrency for ASR pipeline processing.
+// /// Note: This is currently commented out due to trait object safety issues.
+// /// The ModelBackend trait has generic methods which makes it not object-safe.
+// // TODO: Reimplement this with concrete types when needed
 /*
 pub struct StructuredAsrPipeline {
     preprocessor: Arc<dyn ModelBackend<Error = TritonError>>,
@@ -239,6 +239,12 @@ impl PerformanceMonitor {
     }
 }
 
+impl Default for PerformanceMonitor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Statistics for the stream processor.
 #[derive(Debug)]
 pub struct ProcessorStats {
@@ -349,9 +355,8 @@ impl ConcurrencyManager {
 
         let result = task.await;
 
-        match &result {
-            Ok(_) => self.stats.record_item_processed(),
-            Err(_) => {} // Error handling would go here
+        if let Ok(_) = &result {
+            self.stats.record_item_processed()
         }
 
         result

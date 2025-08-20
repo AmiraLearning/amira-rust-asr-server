@@ -205,7 +205,7 @@ impl<T> PooledBuffer<T> {
 
     /// Check if the buffer is empty.
     pub fn is_empty(&self) -> bool {
-        self.buffer.as_ref().map_or(true, |b| b.is_empty())
+        self.buffer.as_ref().is_none_or(|b| b.is_empty())
     }
 }
 

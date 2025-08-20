@@ -44,7 +44,6 @@ impl GracefulShutdown {
                 if let Err(e) = signal::ctrl_c().await {
                     error!("Failed to install Ctrl+C handler: {}", e);
                     // If we can't install Ctrl+C handler, we'll rely on SIGTERM only
-                    return;
                 }
             };
 

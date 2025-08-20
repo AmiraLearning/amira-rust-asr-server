@@ -98,14 +98,12 @@ pub fn init_tracing(config: TracingConfig) -> Result<(), Box<dyn std::error::Err
                 )
                 .try_init()?;
         }
+    } else if let Some(tracer) = tracer {
+        subscriber
+            .with(OpenTelemetryLayer::new(tracer))
+            .try_init()?;
     } else {
-        if let Some(tracer) = tracer {
-            subscriber
-                .with(OpenTelemetryLayer::new(tracer))
-                .try_init()?;
-        } else {
-            subscriber.try_init()?;
-        }
+        subscriber.try_init()?;
     }
 
     info!("Tracing initialization completed");
@@ -178,7 +176,7 @@ pub mod span_utils {
 
     /// Add request identification to the current span.
     pub fn add_request_id(request_id: &Uuid) {
-        Span::current().record("request_id", &request_id.to_string());
+        Span::current().record("request_id", request_id.to_string());
     }
 
     /// Add user identification to the current span.
@@ -218,7 +216,7 @@ pub mod span_utils {
 
     /// Add connection ID to the current span.
     pub fn add_connection_id(connection_id: &Uuid) {
-        Span::current().record("connection_id", &connection_id.to_string());
+        Span::current().record("connection_id", connection_id.to_string());
     }
 
     /// Add remote address to the current span.

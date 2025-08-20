@@ -82,8 +82,7 @@ async fn main() -> Result<()> {
             ..Default::default()
         };
         let triton_pool = ConnectionPool::new(&config.triton_endpoint, pool_config)
-            .await
-            .map_err(AppError::from)?;
+            .await?;
 
         Arc::new(TritonAsrPipeline::new(
             triton_pool,

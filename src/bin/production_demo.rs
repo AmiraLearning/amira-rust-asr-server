@@ -124,8 +124,7 @@ async fn demo_failure(State(state): State<AppState>) -> (StatusCode, Json<Value>
         .circuit_breaker
         .call(async {
             sleep(Duration::from_millis(50)).await;
-            Err::<String, std::io::Error>(std::io::Error::new(
-                std::io::ErrorKind::Other,
+            Err::<String, std::io::Error>(std::io::Error::other(
                 "Simulated failure for demo",
             ))
         })
@@ -194,8 +193,7 @@ async fn demo_scenarios(circuit_breaker: Arc<CircuitBreaker>) {
         let result = circuit_breaker
             .call(async {
                 sleep(Duration::from_millis(50)).await;
-                Err::<String, std::io::Error>(std::io::Error::new(
-                    std::io::ErrorKind::Other,
+                Err::<String, std::io::Error>(std::io::Error::other(
                     format!("Demo failure {}", i),
                 ))
             })

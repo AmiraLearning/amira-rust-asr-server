@@ -4,6 +4,8 @@
 //! server using the RNN-T (Recurrent Neural Network Transducer) architecture
 //! via Triton Inference Server.
 
+#![allow(clippy::result_large_err)]
+
 pub mod asr;
 pub mod async_patterns;
 pub mod config;

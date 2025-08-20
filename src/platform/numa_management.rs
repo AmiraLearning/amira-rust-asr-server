@@ -292,7 +292,7 @@ impl NumaManager {
         };
 
         // Round up to the next page boundary
-        (requested_size + page_size - 1) / page_size * page_size
+        requested_size.div_ceil(page_size) * page_size
     }
 
     /// Check if large pages (2MB) are supported

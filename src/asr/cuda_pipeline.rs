@@ -10,7 +10,7 @@ use tracing::{debug, info};
 
 use crate::asr::pipeline::AsrPipeline;
 use crate::asr::types::{DecoderState, Transcription, Vocabulary};
-use crate::cuda::{AsyncCudaStream, AsyncCudaStreamPool, CudaSharedMemoryPool, ModelConfig};
+use crate::cuda::{AsyncCudaStreamPool, CudaSharedMemoryPool, ModelConfig};
 use crate::error::{AppError, Result};
 
 /// CUDA-based ASR pipeline using direct Triton C API
