@@ -1,3 +1,9 @@
+# ROADMAP (Archived)
+
+This document is archived. See the current roadmap at `docs/Roadmap.md`.
+
+---
+
 Of course. Based on the comprehensive set of files you've provided, this Rust ASR server is a well-architected, high-performance application already incorporating many production-level best practices. The goal is to build on this strong foundation.
 
 Here is a detailed 6-month plan to test, profile, harden, streamline, productionalize, and roll out the server.

@@ -1,3 +1,9 @@
+# HPC Notes (Archived)
+
+This document is archived as historical notes. See `docs/Performance.md` for the current, actionable guidance.
+
+---
+
 Looking at this excellent CppCon 2017 talk by Carl Cook on high-frequency trading systems, I can identify several key principles that would directly improve your Rust ASR server's performance. Let me analyze how these HFT optimization techniques apply to your codebase:
 Ran tool
 Ran tool

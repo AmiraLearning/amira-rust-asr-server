@@ -1,6 +1,6 @@
-# CLAUDE.md
+# Contributor Guide (AI Assistants)
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides quick guidance to AI code assistants working in this repository. For canonical docs, see `docs/`.
 
 ## Development Commands
 
@@ -28,7 +28,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `docker-compose up triton` - Start only Triton Inference Server
 - `docker-compose up -d` - Start services in detached mode
 
-## Architecture Overview
+## Architecture Overview (Summary)
 
 This is a high-performance ASR (Automatic Speech Recognition) server using RNN-T models via Triton Inference Server.
 

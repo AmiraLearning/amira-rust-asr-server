@@ -1,3 +1,10 @@
+# REFACTORING.md (Developer Notes)
+
+This file contains internal refactoring ideas and notes. For the current system design and performance guidance, see:
+
+- `docs/Architecture.md`
+- `docs/Performance.md`
+
 ## 🏗️ **Major Architectural & Stylistic Improvements**
 
 ### **1. Error Handling & Result Types**

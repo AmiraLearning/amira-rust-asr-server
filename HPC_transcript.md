@@ -1,8 +1,14 @@
+# HPC Transcript (Archived)
+
+This is a verbatim talk transcript retained for reference. It is not project design documentation. For current performance practices, see `docs/Performance.md`.
+
+---
+
 CppCon 2017: Carl Cook “When a Microsecond Is an Eternity: High Performance Trading Systems in C++”
 https://www.youtube.com/watch/NH1Tta7purM
 
 Cool so yeah, good afternoon everyone.
-My name is Carl, I work fora company called Optiver.
+My name is Carl, I workfora company called Optiver.
 I work writing automated trading systems
 and I've done that forabout 10 years in total.
 So today's talk is just going to be

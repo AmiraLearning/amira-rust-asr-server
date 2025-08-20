@@ -1,5 +1,11 @@
 # AMIRA Rust ASR Server
 
+> Documentation has been consolidated under `docs/`. See:
+> - `docs/README.md` for the index
+> - `docs/Architecture.md` for current system design
+> - `docs/Operations.md` for config/deploy/monitor
+> - `docs/Performance.md` for tuning guidance
+
 ![Rust](https://img.shields.io/badge/rust-stable-orange.svg)
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)
