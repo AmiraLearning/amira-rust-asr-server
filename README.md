@@ -5,6 +5,7 @@
 > - `docs/Architecture.md` for current system design
 > - `docs/Operations.md` for config/deploy/monitor
 > - `docs/Performance.md` for tuning guidance
+> - Archived docs moved to `docs/legacy/`
 
 ![Rust](https://img.shields.io/badge/rust-stable-orange.svg)
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
