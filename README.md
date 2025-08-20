@@ -44,7 +44,7 @@ A high-performance real-time Automatic Speech Recognition (ASR) server built in 
 
 ### Prerequisites
 
-- **Rust**: 1.70+ (stable channel)
+- **Rust**: 1.89+ (stable channel)
 - **Triton Inference Server**: 23.0+ running on localhost:8001
 - **Audio Models**: RNN-T models in Triton model repository
 
@@ -738,8 +738,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 | Memory Pools | ✅ Stable | 85% | Optimized |
 | SIMD Optimizations | ✅ Stable | 90% | Optimized |
 | Observability | ✅ Stable | 80% | - |
-| Documentation | 🚧 In Progress | 70% | - |
+| Documentation | ✅ Consolidated | 80% | - |
 
-**Last Updated**: 2024-01-15
+**Last Updated**: 2025-08-20
 **Version**: 1.0.0
-**Rust Version**: 1.70+
+**Rust Version**: 1.89+
