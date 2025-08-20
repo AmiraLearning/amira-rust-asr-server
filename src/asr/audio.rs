@@ -315,8 +315,14 @@ impl std::fmt::Debug for AudioRingBuffer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AudioRingBuffer")
             .field("capacity", &self.capacity)
-            .field("write_pos", &self.write_pos.load(std::sync::atomic::Ordering::Relaxed))
-            .field("read_pos", &self.read_pos.load(std::sync::atomic::Ordering::Relaxed))
+            .field(
+                "write_pos",
+                &self.write_pos.load(std::sync::atomic::Ordering::Relaxed),
+            )
+            .field(
+                "read_pos",
+                &self.read_pos.load(std::sync::atomic::Ordering::Relaxed),
+            )
             .field("available_read", &self.available_read())
             .field("available_write", &self.available_write())
             .finish()
@@ -343,10 +349,12 @@ impl AudioRingBuffer {
     /// Ok(()) if successful, or an error if the buffer would overflow
     pub fn write(&self, data: &[u8]) -> Result<()> {
         use std::sync::atomic::Ordering;
-        
+
         let len = data.len();
         if len > self.available_write() {
-            return Err(AppError::Asr(AsrError::AudioProcessing(AudioError::InvalidFormat("Buffer overflow".to_string()))));
+            return Err(AppError::Asr(AsrError::AudioProcessing(
+                AudioError::InvalidFormat("Buffer overflow".to_string()),
+            )));
         }
 
         let current_write_pos = self.write_pos.load(Ordering::Acquire);
@@ -408,7 +416,7 @@ impl AudioRingBuffer {
     /// Number of bytes actually read, or None if not enough data is available
     pub fn read_into(&self, len: usize, output: &mut [u8]) -> Option<usize> {
         use std::sync::atomic::Ordering;
-        
+
         if len > output.len() || len > self.available_read() {
             return None;
         }
@@ -448,10 +456,10 @@ impl AudioRingBuffer {
     /// Get the number of bytes available to read (lock-free).
     pub fn available_read(&self) -> usize {
         use std::sync::atomic::Ordering;
-        
+
         let write_pos = self.write_pos.load(Ordering::Acquire);
         let read_pos = self.read_pos.load(Ordering::Acquire);
-        
+
         if write_pos >= read_pos {
             write_pos - read_pos
         } else {
@@ -472,7 +480,7 @@ impl AudioRingBuffer {
     /// Clear the buffer (lock-free).
     pub fn clear(&self) {
         use std::sync::atomic::Ordering;
-        
+
         self.read_pos.store(0, Ordering::Release);
         self.write_pos.store(0, Ordering::Release);
     }

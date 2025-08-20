@@ -7,8 +7,8 @@ use crate::error::AsrError;
 use crate::types::AudioBuffer;
 // use crate::asr::traits::{ModelBackend, ModelInput, AudioFeatures, EncoderOutput, DecoderOutput};
 use futures::future::BoxFuture;
-use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Semaphore;
 use tokio::time::{timeout, Instant};
@@ -54,7 +54,10 @@ impl AsyncTaskManager {
     where
         F: std::future::Future<Output = Result<T, AsrError>>,
     {
-        let _permit = self.semaphore.acquire().await
+        let _permit = self
+            .semaphore
+            .acquire()
+            .await
             .map_err(|_| AsrError::Pipeline("Failed to acquire task permit".to_string()))?;
 
         timeout(self.timeout_duration, task)
@@ -122,15 +125,15 @@ impl StreamProcessor {
     /// Add audio data to the stream.
     pub fn add_audio(&mut self, audio: &[f32]) -> Vec<Vec<f32>> {
         self.buffer.extend_from_slice(audio);
-        
+
         let mut windows = Vec::new();
         let step = self.window_size - self.overlap;
-        
+
         while self.buffer.len() >= self.window_size {
             windows.push(self.buffer[..self.window_size].to_vec());
             self.buffer.drain(..step);
         }
-        
+
         windows
     }
 
@@ -207,7 +210,8 @@ impl PerformanceMonitor {
 
     /// Record a request.
     pub fn record_request(&self, processing_time: Duration) {
-        self.request_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.request_count
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if let Ok(mut total_time) = self.total_processing_time.lock() {
             *total_time += processing_time;
         }
@@ -215,17 +219,22 @@ impl PerformanceMonitor {
 
     /// Record an error.
     pub fn record_error(&self) {
-        self.error_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.error_count
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Get current statistics.
     pub fn get_stats(&self) -> (usize, usize, Duration) {
-        let requests = self.request_count.load(std::sync::atomic::Ordering::Relaxed);
+        let requests = self
+            .request_count
+            .load(std::sync::atomic::Ordering::Relaxed);
         let errors = self.error_count.load(std::sync::atomic::Ordering::Relaxed);
-        let total_time = self.total_processing_time.lock()
+        let total_time = self
+            .total_processing_time
+            .lock()
             .map(|time| *time)
             .unwrap_or(Duration::ZERO);
-        
+
         (requests, errors, total_time)
     }
 }
@@ -242,9 +251,18 @@ pub struct ProcessorStats {
 impl Clone for ProcessorStats {
     fn clone(&self) -> Self {
         Self {
-            items_received: AtomicUsize::new(self.items_received.load(std::sync::atomic::Ordering::SeqCst)),
-            items_processed: AtomicUsize::new(self.items_processed.load(std::sync::atomic::Ordering::SeqCst)),
-            batches_processed: AtomicUsize::new(self.batches_processed.load(std::sync::atomic::Ordering::SeqCst)),
+            items_received: AtomicUsize::new(
+                self.items_received
+                    .load(std::sync::atomic::Ordering::SeqCst),
+            ),
+            items_processed: AtomicUsize::new(
+                self.items_processed
+                    .load(std::sync::atomic::Ordering::SeqCst),
+            ),
+            batches_processed: AtomicUsize::new(
+                self.batches_processed
+                    .load(std::sync::atomic::Ordering::SeqCst),
+            ),
             start_time: self.start_time,
         }
     }
@@ -263,25 +281,31 @@ impl ProcessorStats {
 
     /// Record an item received.
     pub fn record_item_received(&self) {
-        self.items_received.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.items_received
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Record an item processed.
     pub fn record_item_processed(&self) {
-        self.items_processed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.items_processed
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Record a batch processed.
     pub fn record_batch_processed(&self) {
-        self.batches_processed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.batches_processed
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Get current statistics.
     pub fn get_stats(&self) -> (usize, usize, usize, Duration) {
         (
-            self.items_received.load(std::sync::atomic::Ordering::Relaxed),
-            self.items_processed.load(std::sync::atomic::Ordering::Relaxed),
-            self.batches_processed.load(std::sync::atomic::Ordering::Relaxed),
+            self.items_received
+                .load(std::sync::atomic::Ordering::Relaxed),
+            self.items_processed
+                .load(std::sync::atomic::Ordering::Relaxed),
+            self.batches_processed
+                .load(std::sync::atomic::Ordering::Relaxed),
             self.start_time.elapsed(),
         )
     }
@@ -316,13 +340,15 @@ impl ConcurrencyManager {
     where
         F: std::future::Future<Output = AsyncResult<T>>,
     {
-        let _permit = self.semaphore.acquire().await
-            .map_err(|_| AsrError::Pipeline("Failed to acquire concurrency permit".to_string()))?;
+        let _permit =
+            self.semaphore.acquire().await.map_err(|_| {
+                AsrError::Pipeline("Failed to acquire concurrency permit".to_string())
+            })?;
 
         self.stats.record_item_received();
-        
+
         let result = task.await;
-        
+
         match &result {
             Ok(_) => self.stats.record_item_processed(),
             Err(_) => {} // Error handling would go here
@@ -364,7 +390,7 @@ impl<T> ResourcePool<T> {
                 return resource;
             }
         }
-        
+
         (self.factory)()
     }
 
@@ -392,7 +418,10 @@ impl AudioStreamChannel {
     }
 
     /// Send audio data.
-    pub async fn send(&self, audio: AudioBuffer) -> Result<(), tokio::sync::mpsc::error::SendError<AudioBuffer>> {
+    pub async fn send(
+        &self,
+        audio: AudioBuffer,
+    ) -> Result<(), tokio::sync::mpsc::error::SendError<AudioBuffer>> {
         self.sender.send(audio).await
     }
 

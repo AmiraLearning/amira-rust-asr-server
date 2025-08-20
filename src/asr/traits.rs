@@ -4,7 +4,7 @@
 //! allowing for better testability, modularity, and potential backend swapping.
 
 use crate::error::{AsrError, ModelError};
-use crate::types::{AudioBuffer, ConfidenceScore, TokenId, TensorShape};
+use crate::types::{AudioBuffer, ConfidenceScore, TensorShape, TokenId};
 use async_trait::async_trait;
 use std::sync::Arc;
 
@@ -109,7 +109,7 @@ impl DecoderState {
             state_version: 0,
         }
     }
-    
+
     /// Reset the decoder state.
     pub fn reset(&mut self) {
         self.hidden_states.clear();
@@ -117,7 +117,7 @@ impl DecoderState {
         self.time_step = 0;
         self.state_version += 1;
     }
-    
+
     /// Check if the state is empty.
     pub fn is_empty(&self) -> bool {
         self.hidden_states.is_empty()
@@ -139,16 +139,16 @@ pub trait StreamingAsrProcessor: Send + Sync {
         audio: &AudioBuffer,
         state: &mut DecoderState,
     ) -> Result<PartialTranscription, AsrError>;
-    
+
     /// Finalize the current transcription.
     async fn finalize(&self, state: &mut DecoderState) -> Result<CompleteTranscription, AsrError>;
-    
+
     /// Reset the processor state.
     async fn reset(&self, state: &mut DecoderState) -> Result<(), AsrError>;
-    
+
     /// Get the expected audio chunk size for optimal processing.
     fn optimal_chunk_size(&self) -> usize;
-    
+
     /// Get the minimum audio chunk size.
     fn min_chunk_size(&self) -> usize;
 }
@@ -161,16 +161,16 @@ pub trait BatchAsrProcessor: Send + Sync {
         &self,
         audio: &AudioBuffer,
     ) -> Result<CompleteTranscription, AsrError>;
-    
+
     /// Process multiple audio buffers in batch.
     async fn process_batch(
         &self,
         audio_batch: &[AudioBuffer],
     ) -> Result<Vec<CompleteTranscription>, AsrError>;
-    
+
     /// Get the maximum audio length that can be processed.
     fn max_audio_length(&self) -> usize;
-    
+
     /// Get the optimal batch size for processing.
     fn optimal_batch_size(&self) -> usize;
 }
@@ -179,10 +179,10 @@ pub trait BatchAsrProcessor: Send + Sync {
 pub trait ModelInput: Send + Sync {
     /// Get the input tensor shape.
     fn shape(&self) -> TensorShape;
-    
+
     /// Get the input data as a slice.
     fn data(&self) -> &[f32];
-    
+
     /// Validate the input data.
     fn validate(&self) -> Result<(), ModelError>;
 }
@@ -193,13 +193,13 @@ pub trait ModelOutput: Send + Sync {
     fn from_tensor_data(data: Vec<f32>, shape: TensorShape) -> Result<Self, ModelError>
     where
         Self: Sized;
-    
+
     /// Get the output tensor shape.
     fn shape(&self) -> TensorShape;
-    
+
     /// Get the output data as a slice.
     fn data(&self) -> &[f32];
-    
+
     /// Validate the output data.
     fn validate(&self) -> Result<(), ModelError>;
 }
@@ -209,22 +209,22 @@ pub trait ModelOutput: Send + Sync {
 pub trait ModelBackend: Send + Sync {
     /// Error type for this backend.
     type Error: std::error::Error + Send + Sync + 'static;
-    
+
     /// Perform inference with the model.
     async fn infer<I, O>(&self, input: I) -> Result<O, Self::Error>
     where
         I: ModelInput + Send,
         O: ModelOutput + Send;
-    
+
     /// Get model information.
     fn model_info(&self) -> ModelInfo;
-    
+
     /// Check if the model is ready for inference.
     async fn is_ready(&self) -> bool;
-    
+
     /// Get the model's input shape requirements.
     fn input_shape(&self) -> TensorShape;
-    
+
     /// Get the model's output shape.
     fn output_shape(&self) -> TensorShape;
 }
@@ -234,10 +234,10 @@ pub trait ModelBackend: Send + Sync {
 pub trait AudioPreprocessor: Send + Sync {
     /// Preprocess audio into features.
     async fn preprocess(&self, audio: &AudioBuffer) -> Result<AudioFeatures, AsrError>;
-    
+
     /// Get the expected input sample rate.
     fn expected_sample_rate(&self) -> crate::types::SampleRate;
-    
+
     /// Get the output feature dimensions.
     fn output_dimensions(&self) -> (usize, usize); // (time_steps, feature_dim)
 }
@@ -257,12 +257,12 @@ impl ModelInput for AudioFeatures {
     fn shape(&self) -> TensorShape {
         TensorShape::new(vec![self.dimensions.0, self.dimensions.1])
     }
-    
+
     fn data(&self) -> &[f32] {
         // This is a simplified implementation - in practice, you'd flatten the 2D features
         &[]
     }
-    
+
     fn validate(&self) -> Result<(), ModelError> {
         if self.features.is_empty() {
             return Err(ModelError::Preprocessing("Empty features".to_string()));
@@ -290,18 +290,20 @@ impl ModelOutput for EncoderOutput {
             hidden_states: Vec::new(),
         })
     }
-    
+
     fn shape(&self) -> TensorShape {
         self.shape.clone()
     }
-    
+
     fn data(&self) -> &[f32] {
         &self.encoded_features
     }
-    
+
     fn validate(&self) -> Result<(), ModelError> {
         if self.encoded_features.is_empty() {
-            return Err(ModelError::Postprocessing("Empty encoded features".to_string()));
+            return Err(ModelError::Postprocessing(
+                "Empty encoded features".to_string(),
+            ));
         }
         Ok(())
     }
@@ -326,15 +328,15 @@ impl ModelOutput for DecoderOutput {
             decoder_state: Vec::new(),
         })
     }
-    
+
     fn shape(&self) -> TensorShape {
         self.shape.clone()
     }
-    
+
     fn data(&self) -> &[f32] {
         &self.logits
     }
-    
+
     fn validate(&self) -> Result<(), ModelError> {
         if self.logits.is_empty() {
             return Err(ModelError::Postprocessing("Empty logits".to_string()));
@@ -347,22 +349,22 @@ impl ModelOutput for DecoderOutput {
 pub trait Vocabulary: Send + Sync {
     /// Get the vocabulary size.
     fn size(&self) -> usize;
-    
+
     /// Convert token ID to text.
     fn id_to_token(&self, id: TokenId) -> Option<&str>;
-    
+
     /// Convert text to token ID.
     fn token_to_id(&self, token: &str) -> Option<TokenId>;
-    
+
     /// Get the blank token ID.
     fn blank_token_id(&self) -> TokenId;
-    
+
     /// Get the unknown token ID.
     fn unknown_token_id(&self) -> TokenId;
-    
+
     /// Check if a token ID is valid.
     fn is_valid_token(&self, id: TokenId) -> bool;
-    
+
     /// Convert a sequence of token IDs to text.
     fn decode(&self, tokens: &[TokenId]) -> String {
         tokens
@@ -377,16 +379,16 @@ pub trait Vocabulary: Send + Sync {
 pub trait MemoryPool<T>: Send + Sync {
     /// Get an object from the pool.
     fn get(&self) -> Option<T>;
-    
+
     /// Return an object to the pool.
     fn put(&self, item: T);
-    
+
     /// Get the current pool size.
     fn size(&self) -> usize;
-    
+
     /// Get the number of available objects.
     fn available(&self) -> usize;
-    
+
     /// Get pool statistics.
     fn stats(&self) -> PoolStats;
 }
@@ -415,7 +417,7 @@ impl PoolStats {
             self.total_returned as f64 / self.total_borrowed as f64
         }
     }
-    
+
     /// Calculate the utilization rate (current_size / total_created).
     pub fn utilization_rate(&self) -> f64 {
         if self.total_created == 0 {
@@ -430,19 +432,19 @@ impl PoolStats {
 pub trait AsrConfig: Send + Sync {
     /// Get the Triton endpoint URL.
     fn triton_endpoint(&self) -> &str;
-    
+
     /// Get the vocabulary file path.
     fn vocabulary_path(&self) -> &str;
-    
+
     /// Get the connection pool size.
     fn pool_size(&self) -> usize;
-    
+
     /// Get the inference timeout.
     fn inference_timeout(&self) -> std::time::Duration;
-    
+
     /// Get the maximum audio length.
     fn max_audio_length(&self) -> usize;
-    
+
     /// Get the optimal batch size.
     fn optimal_batch_size(&self) -> usize;
 }
@@ -476,13 +478,13 @@ impl MockTimeProvider {
             current_time: Arc::new(parking_lot::Mutex::new(std::time::Instant::now())),
         }
     }
-    
+
     /// Advance the mock time by a duration.
     pub fn advance(&self, duration: std::time::Duration) {
         let mut time = self.current_time.lock();
         *time += duration;
     }
-    
+
     /// Set the mock time to a specific instant.
     pub fn set_time(&self, time: std::time::Instant) {
         *self.current_time.lock() = time;
@@ -505,7 +507,7 @@ impl Default for MockTimeProvider {
 mod tests {
     use super::*;
     use std::time::Duration;
-    
+
     #[test]
     fn test_decoder_state_creation() {
         let state = DecoderState::new();
@@ -513,22 +515,22 @@ mod tests {
         assert_eq!(state.time_step, 0);
         assert_eq!(state.state_version, 0);
     }
-    
+
     #[test]
     fn test_decoder_state_reset() {
         let mut state = DecoderState::new();
         state.hidden_states.push(1.0);
         state.prediction_history.push(TokenId::new(1));
         state.time_step = 5;
-        
+
         let initial_version = state.state_version;
         state.reset();
-        
+
         assert!(state.is_empty());
         assert_eq!(state.time_step, 0);
         assert_eq!(state.state_version, initial_version + 1);
     }
-    
+
     #[test]
     fn test_pool_stats_calculations() {
         let stats = PoolStats {
@@ -538,19 +540,19 @@ mod tests {
             current_size: 7,
             available: 3,
         };
-        
+
         assert_eq!(stats.hit_rate(), 0.75);
         assert_eq!(stats.utilization_rate(), 0.7);
     }
-    
+
     #[test]
     fn test_mock_time_provider() {
         let provider = MockTimeProvider::new();
         let initial_time = provider.now();
-        
+
         provider.advance(Duration::from_secs(1));
         let advanced_time = provider.now();
-        
+
         assert!(advanced_time > initial_time);
         assert_eq!(advanced_time - initial_time, Duration::from_secs(1));
     }

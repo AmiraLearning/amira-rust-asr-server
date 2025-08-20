@@ -67,7 +67,10 @@ impl ReliableTritonClient {
 
         // Directly call the client (circuit breaker temporarily disabled)
         let mut client = self.client.lock().await;
-        client.infer(request).await.map_err(|e| AppError::Internal(format!("Triton inference failed: {}", e)))
+        client
+            .infer(request)
+            .await
+            .map_err(|e| AppError::Internal(format!("Triton inference failed: {}", e)))
     }
 
     // /// Get the current circuit breaker state (temporarily disabled).
@@ -177,19 +180,19 @@ mod tests {
 
     // Tests temporarily disabled while circuit breaker functionality is being rebuilt
     // TODO: Re-enable these tests when circuit breaker is restored
-    
+
     // #[tokio::test]
     // async fn test_reliable_client_builder() {
     //     let builder = ReliableTritonClientBuilder::new("http://localhost:8001")
     //         .with_failure_threshold(3)
     //         .with_request_timeout(Duration::from_secs(5))
     //         .with_recovery_timeout(Duration::from_secs(10));
-    // 
+    //
     //     // Note: This test would fail without a real Triton server
     //     // In a real test environment, you'd mock the Triton client
     //     assert_eq!(builder.endpoint, "http://localhost:8001");
     //     assert!(builder.circuit_config.is_some());
-    // 
+    //
     //     let config = builder.circuit_config.unwrap();
     //     assert_eq!(config.failure_threshold, 3);
     //     assert_eq!(config.request_timeout, Duration::from_secs(5));

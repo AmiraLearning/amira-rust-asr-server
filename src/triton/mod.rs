@@ -174,16 +174,14 @@ mod types;
 
 pub use client::{TritonClient, TritonClientError};
 pub use model::{
-    DecoderJointInput, DecoderJointInputRef, DecoderJointModel, DecoderJointOutput, EncoderInput, EncoderModel,
-    EncoderOutput, PreprocessorInput, PreprocessorInputRef, PreprocessorModel, PreprocessorOutput, TritonModel,
+    DecoderJointInput, DecoderJointInputRef, DecoderJointModel, DecoderJointOutput, EncoderInput,
+    EncoderModel, EncoderOutput, PreprocessorInput, PreprocessorInputRef, PreprocessorModel,
+    PreprocessorOutput, TritonModel,
 };
 // Re-export optimized pool with original names for compatibility
 pub use pool_optimized::{
-    OptimizedConnectionPool as ConnectionPool, 
-    OptimizedPoolConfig as PoolConfig, 
-    OptimizedPooledConnection as PooledConnection,
-    PoolStats,
-    PoolStatsSnapshot
+    OptimizedConnectionPool as ConnectionPool, OptimizedPoolConfig as PoolConfig,
+    OptimizedPooledConnection as PooledConnection, PoolStats, PoolStatsSnapshot,
 };
 pub use reliable_client::{ReliableTritonClient, ReliableTritonClientBuilder};
 pub use types::{parse_raw_tensors, RawTensor, TensorData, TensorDataType, TensorDef, TensorShape};

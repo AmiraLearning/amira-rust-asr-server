@@ -68,6 +68,7 @@ pub trait AsrPipeline: Send + Sync {
 
 /// Decoding algorithm selection.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum DecodingAlgorithm {
     /// Greedy decoding (faster, less accurate)
     Greedy,
@@ -116,7 +117,6 @@ impl TritonAsrPipeline {
         }
     }
 
-
     /// Convert audio bytes to normalized samples using optimized SIMD conversion.
     ///
     /// # Arguments
@@ -164,9 +164,7 @@ impl TritonAsrPipeline {
         // Step 1: Preprocess audio to features
         // Get connection from pool and reuse throughout the pipeline
         let mut pooled_connection = self.connection_pool.get().await?;
-        let preprocessor_input = PreprocessorInputRef {
-            waveform,
-        };
+        let preprocessor_input = PreprocessorInputRef { waveform };
 
         debug!("Calling preprocessor...");
         let preprocessor_output = {
@@ -198,7 +196,7 @@ impl TritonAsrPipeline {
 
         // Step 3: RNN-T Decoding
         let decoding_algorithm_name = "greedy";
-        
+
         info!(
             "Starting RNN-T decoding with {} encoder frames using {}",
             encoder_output.encoded_len, decoding_algorithm_name
@@ -212,7 +210,7 @@ impl TritonAsrPipeline {
             // Clone the client for this specific decode step
             let client = client_for_decode.clone();
             let decoder = decoder_joint_ref;
-            
+
             // For now, we still need to clone for the async closure, but we avoid the double clone
             // This is still better than the original implementation
             let input = DecoderJointInput {
@@ -273,15 +271,16 @@ impl TritonAsrPipeline {
         waveform: &[f32],
         initial_state: DecoderState,
     ) -> Result<(Transcription, DecoderState)> {
-        info!("Starting zero-copy ASR pipeline for {} samples", waveform.len());
+        info!(
+            "Starting zero-copy ASR pipeline for {} samples",
+            waveform.len()
+        );
 
         // Get connection from pool and reuse throughout the pipeline
         let mut pooled_connection = self.connection_pool.get().await?;
 
         // Step 1: Preprocess audio to features using zero-copy
-        let preprocessor_input = PreprocessorInputRef {
-            waveform,
-        };
+        let preprocessor_input = PreprocessorInputRef { waveform };
 
         debug!("Calling preprocessor (zero-copy)...");
         let preprocessor_output = {
@@ -324,7 +323,7 @@ impl TritonAsrPipeline {
         let decode_step = |encoder_frame: &[f32], targets: &[i32], state: DecoderState| {
             let client = client_for_decode.clone();
             let decoder = decoder_joint_ref;
-            
+
             // Still need to clone for async closure but this is more optimal than original
             let input = DecoderJointInput {
                 encoder_frame: encoder_frame.to_vec(),
@@ -356,7 +355,10 @@ impl TritonAsrPipeline {
         )
         .await?;
 
-        info!("Zero-copy RNN-T decoding complete: {} tokens generated", tokens.len());
+        info!(
+            "Zero-copy RNN-T decoding complete: {} tokens generated",
+            tokens.len()
+        );
         if !tokens.is_empty() {
             debug!("Generated tokens: {:?}", tokens);
         }

@@ -17,9 +17,8 @@ use tower_http::cors::CorsLayer;
 use tracing::{error, info};
 
 use crate::asr::types::{AsrResponse, StreamStatus};
-use crate::asr::AsrPipeline;
 use crate::constants::audio::{MAX_BATCH_AUDIO_LENGTH_SECS, SAMPLE_RATE};
-use crate::error::{AppError, ServerError, Result};
+use crate::error::{AppError, Result, ServerError};
 use crate::server::stream::create_stream;
 use crate::server::AppState;
 
@@ -102,8 +101,11 @@ impl BatchRequest {
 
         // Validate opaque data size if present
         if let Some(ref opaque) = self.opaque {
-            let opaque_str = serde_json::to_string(opaque)
-                .map_err(|_| AppError::Server(ServerError::RequestValidation("Invalid opaque data format".to_string())))?;
+            let opaque_str = serde_json::to_string(opaque).map_err(|_| {
+                AppError::Server(ServerError::RequestValidation(
+                    "Invalid opaque data format".to_string(),
+                ))
+            })?;
             if opaque_str.len() > 10_000 {
                 return Err(AppError::Server(ServerError::RequestValidation(
                     "Opaque data too large (max: 10KB)".to_string(),

@@ -10,7 +10,7 @@ use crate::asr::types::{
     AccumulatedPredictions, DecoderState, SeqSlice, Transcription, Vocabulary, W2V_SAMPLE_RATE,
 };
 use crate::asr::weaving::{is_overlap_silence, weave_transcript_segs};
-use crate::asr::{AsrPipeline, TritonAsrPipeline};
+use crate::asr::AsrPipeline;
 use crate::error::Result;
 
 use tracing::{debug, info};

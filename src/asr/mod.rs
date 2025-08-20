@@ -14,14 +14,14 @@
 //! ## Core Optimizations
 //!
 //! ### Memory Management (`lockfree_memory.rs`)
-//! 
+//!
 //! Implements lock-free memory pools to eliminate allocation overhead:
 //! - **Zero-Copy Operations**: Reuses pre-allocated buffers throughout the pipeline
 //! - **Lock-Free Pools**: Crossbeam-based pools for concurrent access without mutex contention
 //! - **Pool Statistics**: Real-time monitoring of pool utilization and hit rates
 //! - **Automatic Scaling**: Dynamic pool sizing based on workload patterns
 //!
-//! **Performance Impact**: 40-60% reduction in memory allocation overhead, 20-30% 
+//! **Performance Impact**: 40-60% reduction in memory allocation overhead, 20-30%
 //! improvement in overall throughput under high concurrent load.
 //!
 //! ### SIMD Acceleration (`simd.rs`)
@@ -65,7 +65,7 @@
 //!
 //! // Initialize with optimized memory pools
 //! let pipeline = TritonAsrPipeline::new(connection_pool, vocabulary);
-//! 
+//!
 //! // Process with zero-copy optimization
 //! let transcription = pipeline.process_batch_samples(&audio_samples).await?;
 //! ```
@@ -132,12 +132,12 @@
 
 mod audio;
 pub mod builder;
+#[cfg(feature = "cuda")]
+mod cuda_pipeline;
 mod decoder_optimized;
 mod incremental;
 mod lockfree_memory;
 mod pipeline;
-#[cfg(feature = "cuda")]
-mod cuda_pipeline;
 pub mod simd;
 pub mod traits;
 pub mod types;
@@ -149,48 +149,54 @@ pub use audio::{
     AudioRingBuffer, OverlappingAudioBuffer,
 };
 // Re-export optimized decoder with compatibility
-pub use decoder_optimized::{greedy_decode, greedy_decode_zero_copy, greedy_decode_zero_copy_async};
+pub use decoder_optimized::{
+    greedy_decode, greedy_decode_zero_copy, greedy_decode_zero_copy_async,
+};
 pub use incremental::IncrementalAsr;
 // Re-export lock-free memory with original names for compatibility
 pub use lockfree_memory::{
-    global_lockfree_pools as global_pools,
-    get_lockfree_decoder_workspace,
-    LockFreeAsrMemoryPools as AsrMemoryPools, 
-    LockFreeAsrMemoryStats as AsrMemoryStats,
-    LockFreeObjectPool as ObjectPool,
-    LockFreePooledObject as PooledObject
+    get_lockfree_decoder_workspace, global_lockfree_pools as global_pools,
+    LockFreeAsrMemoryPools as AsrMemoryPools, LockFreeAsrMemoryStats as AsrMemoryStats,
+    LockFreeObjectPool as ObjectPool, LockFreePooledObject as PooledObject,
 };
 
 // Create compatibility module aliases
 pub mod memory {
     pub use super::lockfree_memory::{
-        global_lockfree_pools as global_pools,
-        LockFreeAsrMemoryPools as AsrMemoryPools,
-        LockFreeAsrMemoryStats as AsrMemoryStats,
-        LockFreeObjectPool as ObjectPool,
-        LockFreePooledObject as PooledObject
+        global_lockfree_pools as global_pools, LockFreeAsrMemoryPools as AsrMemoryPools,
+        LockFreeAsrMemoryStats as AsrMemoryStats, LockFreeObjectPool as ObjectPool,
+        LockFreePooledObject as PooledObject,
     };
 }
 
 pub mod decoder {
-    pub use super::decoder_optimized::{greedy_decode, greedy_decode_zero_copy, greedy_decode_zero_copy_async};
+    pub use super::decoder_optimized::{
+        greedy_decode, greedy_decode_zero_copy, greedy_decode_zero_copy_async,
+    };
 }
-pub use pipeline::{AsrPipeline, TritonAsrPipeline};
+pub use builder::*;
 #[cfg(feature = "cuda")]
 pub use cuda_pipeline::{CudaAsrPipeline, CudaAsrPipelineBuilder};
-pub use builder::*;
-pub use types::{AccumulatedPredictions, SeqSlice, Vocabulary};
-pub use traits::*;
-pub use zero_copy::{argmax_zero_copy, with_decoder_workspace, DecoderWorkspace, TensorView};
+pub use pipeline::{AsrPipeline, TritonAsrPipeline};
 pub use simd::{
+    argmax_optimized,
+    batch_normalize_optimized,
+    // Batch processing and utilities
+    batch_process_audio_streams,
     // Audio processing functions
-    bytes_to_f32_optimized, bytes_to_f32_safe_optimized, 
-    mean_amplitude_optimized, mean_amplitude_safe_optimized, 
+    bytes_to_f32_optimized,
+    bytes_to_f32_safe_optimized,
+    dot_product_optimized,
+    gemm_f32_optimized,
+    mean_amplitude_optimized,
+    mean_amplitude_safe_optimized,
     smooth_audio_optimized,
     // Neural network operations
-    softmax_optimized, batch_normalize_optimized, dot_product_optimized,
+    softmax_optimized,
     // Matrix operations
-    transpose_encoder_output, gemm_f32_optimized, argmax_optimized,
-    // Batch processing and utilities
-    batch_process_audio_streams, AlignedBuffer
+    transpose_encoder_output,
+    AlignedBuffer,
 };
+pub use traits::*;
+pub use types::{AccumulatedPredictions, SeqSlice, Vocabulary};
+pub use zero_copy::{argmax_zero_copy, with_decoder_workspace, DecoderWorkspace, TensorView};

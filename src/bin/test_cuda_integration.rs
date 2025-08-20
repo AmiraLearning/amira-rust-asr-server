@@ -11,25 +11,27 @@ use tracing::{info, warn};
 async fn main() -> Result<()> {
     // Initialize tracing
     tracing_subscriber::fmt::init();
-    
+
     info!("Testing CUDA integration...");
-    
+
     // Test configuration loading
     let config = Config::from_env()?;
-    info!("Loaded configuration: backend = {}, device_id = {}", 
-          config.inference_backend, config.cuda_device_id);
-    
+    info!(
+        "Loaded configuration: backend = {}, device_id = {}",
+        config.inference_backend, config.cuda_device_id
+    );
+
     // Test backend validation
     match config.validate_backend() {
         Ok(()) => info!("Backend configuration is valid"),
         Err(e) => warn!("Backend validation failed: {}", e),
     }
-    
+
     // Test CUDA availability (if compiled with CUDA support)
     #[cfg(feature = "cuda")]
     {
         info!("Testing CUDA module...");
-        
+
         match amira_rust_asr_server::cuda::is_cuda_available() {
             true => {
                 info!("CUDA is available!");
@@ -40,26 +42,32 @@ async fn main() -> Result<()> {
             }
             false => warn!("CUDA is not available on this system"),
         }
-        
+
         // Test model configuration
         let preprocessor_config = amira_rust_asr_server::cuda::ModelConfig::preprocessor();
-        info!("Preprocessor config: total input size = {} bytes", 
-              preprocessor_config.total_input_size());
-        
+        info!(
+            "Preprocessor config: total input size = {} bytes",
+            preprocessor_config.total_input_size()
+        );
+
         let encoder_config = amira_rust_asr_server::cuda::ModelConfig::encoder();
-        info!("Encoder config: total input size = {} bytes", 
-              encoder_config.total_input_size());
-        
+        info!(
+            "Encoder config: total input size = {} bytes",
+            encoder_config.total_input_size()
+        );
+
         let decoder_config = amira_rust_asr_server::cuda::ModelConfig::decoder_joint();
-        info!("Decoder config: total input size = {} bytes", 
-              decoder_config.total_input_size());
+        info!(
+            "Decoder config: total input size = {} bytes",
+            decoder_config.total_input_size()
+        );
     }
-    
+
     #[cfg(not(feature = "cuda"))]
     {
         info!("CUDA support not compiled in - this is expected for non-CUDA builds");
     }
-    
+
     info!("CUDA integration test completed successfully!");
     Ok(())
 }

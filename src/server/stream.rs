@@ -19,12 +19,12 @@ use uuid::Uuid;
 use crate::asr::types::{AsrResponse, StreamStatus};
 use crate::asr::{AudioRingBuffer, IncrementalAsr};
 // use crate::performance::specialized_pools::spawn_io;  // Disabled for now
+use crate::async_patterns::{AsyncTaskManager, ErrorRecoveryManager, PerformanceMonitor};
 use crate::constants::audio::{BUFFER_CAPACITY, MIN_PARTIAL_TRANSCRIPTION_SAMPLES};
 use crate::constants::streaming::{
     CONTROL_BYTE_END, CONTROL_BYTE_KEEPALIVE, KEEPALIVE_CHECK_PERIOD_MS, STREAM_TIMEOUT_SECS,
 };
-use crate::error::{AppError, AsrError, AudioError, ServerError, Result};
-use crate::async_patterns::{AsyncTaskManager, ErrorRecoveryManager, PerformanceMonitor};
+use crate::error::{AppError, AsrError, AudioError, Result, ServerError};
 use crate::server::AppState;
 
 /// Handle for a streaming ASR session.
@@ -78,15 +78,15 @@ pub struct StreamProcessor {
 
     /// Rate limiting: start time of current window  
     window_start: Instant,
-    
+
     /// Async task manager for concurrency control
     #[allow(dead_code)]
     task_manager: AsyncTaskManager,
-    
+
     /// Error recovery manager for resilience
     #[allow(dead_code)]
     error_recovery: ErrorRecoveryManager,
-    
+
     /// Performance monitoring
     performance_monitor: PerformanceMonitor,
 }
@@ -130,9 +130,9 @@ impl StreamProcessor {
             window_start: Instant::now(),
             task_manager: AsyncTaskManager::new(4, Duration::from_secs(10)),
             error_recovery: ErrorRecoveryManager::new(
-                3, // max retries
+                3,                          // max retries
                 Duration::from_millis(100), // base delay
-                Duration::from_secs(5), // max delay
+                Duration::from_secs(5),     // max delay
             ),
             performance_monitor: PerformanceMonitor::new(),
         }
@@ -238,13 +238,19 @@ impl StreamProcessor {
                         "End of stream signal received for stream {}",
                         self.stream_id
                     );
-                    return Err(AppError::Server(ServerError::RequestValidation("End of stream".to_string())));
+                    return Err(AppError::Server(ServerError::RequestValidation(
+                        "End of stream".to_string(),
+                    )));
                 }
                 CONTROL_BYTE_KEEPALIVE => {
                     self.is_paused = true;
                     return Ok(());
                 }
-                _ => return Err(AppError::Server(ServerError::RequestValidation("Unknown control byte".to_string()))),
+                _ => {
+                    return Err(AppError::Server(ServerError::RequestValidation(
+                        "Unknown control byte".to_string(),
+                    )))
+                }
             }
         }
 
@@ -290,10 +296,16 @@ impl StreamProcessor {
         let bytes_read = self
             .audio_buffer
             .read_into(available, &mut audio_data)
-            .ok_or_else(|| AppError::Asr(AsrError::AudioProcessing(AudioError::InvalidFormat("Failed to read from buffer".to_string()))))?;
-        
+            .ok_or_else(|| {
+                AppError::Asr(AsrError::AudioProcessing(AudioError::InvalidFormat(
+                    "Failed to read from buffer".to_string(),
+                )))
+            })?;
+
         if bytes_read != available {
-            return Err(AppError::Asr(AsrError::AudioProcessing(AudioError::InvalidFormat("Failed to read expected amount from buffer".to_string()))));
+            return Err(AppError::Asr(AsrError::AudioProcessing(
+                AudioError::InvalidFormat("Failed to read expected amount from buffer".to_string()),
+            )));
         }
 
         // Record processing start time
@@ -307,8 +319,17 @@ impl StreamProcessor {
         .await
         {
             Ok(Ok(transcription)) => transcription,
-            Ok(Err(e)) => return Err(AppError::Asr(AsrError::Pipeline(format!("ASR processing failed: {}", e)))),
-            Err(_) => return Err(AppError::Asr(AsrError::Pipeline("ASR processing timeout".to_string()))),
+            Ok(Err(e)) => {
+                return Err(AppError::Asr(AsrError::Pipeline(format!(
+                    "ASR processing failed: {}",
+                    e
+                ))))
+            }
+            Err(_) => {
+                return Err(AppError::Asr(AsrError::Pipeline(
+                    "ASR processing timeout".to_string(),
+                )))
+            }
         };
 
         // Record processing time
@@ -333,21 +354,21 @@ impl StreamProcessor {
             }
         }
 
-                // Build response for client
-                let response = AsrResponse {
-                    transcription: self.last_transcription.clone(),
-                    status: if is_final {
-                        StreamStatus::Complete
-                    } else {
-                        StreamStatus::Active
-                    },
-                    message: None,
-                    metadata: Some(metadata),
-                    opaque: None,
-                };
+        // Build response for client
+        let response = AsrResponse {
+            transcription: self.last_transcription.clone(),
+            status: if is_final {
+                StreamStatus::Complete
+            } else {
+                StreamStatus::Active
+            },
+            message: None,
+            metadata: Some(metadata),
+            opaque: None,
+        };
 
-                // Move serialization off the main event loop to prevent blocking
-                self.send_response_async(response).await?;
+        // Move serialization off the main event loop to prevent blocking
+        self.send_response_async(response).await?;
 
         Ok(())
     }
@@ -381,7 +402,7 @@ impl StreamProcessor {
     }
 
     /// Send response to client with off-main-thread serialization to prevent blocking.
-    /// 
+    ///
     /// This method moves JSON serialization to a dedicated I/O thread to avoid blocking
     /// the main WebSocket event loop during serialization of potentially large responses.
     ///
@@ -393,12 +414,12 @@ impl StreamProcessor {
     async fn send_response_async(&mut self, response: AsrResponse) -> Result<()> {
         // Create a channel for communicating serialization result
         let (tx, rx) = oneshot::channel::<Result<String>>();
-        
+
         // Spawn serialization on dedicated I/O thread pool to avoid blocking main event loop
         tokio::spawn(async move {
             let json_result = serde_json::to_string(&response)
                 .map_err(|e| AppError::Internal(format!("JSON serialization error: {}", e)));
-            
+
             // Send result back to main thread
             let _ = tx.send(json_result);
         });
@@ -415,7 +436,7 @@ impl StreamProcessor {
             .send(Message::Text(json))
             .await
             .map_err(|e| AppError::Internal(format!("WebSocket send error: {}", e)))?;
-            
+
         Ok(())
     }
 

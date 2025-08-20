@@ -4,18 +4,21 @@
 //! optimal performance features while maintaining compatibility across different
 //! operating systems and hardware configurations.
 
-pub mod detection;
-pub mod io_backend;
-pub mod capabilities;
-pub mod init;
-pub mod cloud_detection;
-pub mod numa_management;
 pub mod affinity_management;
+pub mod capabilities;
+pub mod cloud_detection;
+pub mod detection;
+pub mod init;
+pub mod io_backend;
+pub mod numa_management;
 
-pub use detection::{PlatformInfo, detect_platform, is_io_uring_available};
-pub use io_backend::{IoBackend, create_optimal_io_backend};
-pub use capabilities::{PlatformCapabilities, detect_capabilities};
-pub use init::{PlatformInit, initialize_platform};
-pub use cloud_detection::{CloudProvider, CloudInstanceInfo, CloudConfig, detect_cloud_environment, generate_cloud_config, apply_cloud_config};
-pub use numa_management::{NumaManager, NumaStrategy, create_numa_manager};
-pub use affinity_management::{AffinityManager, AffinityStrategy, create_affinity_manager};
+pub use affinity_management::{create_affinity_manager, AffinityManager, AffinityStrategy};
+pub use capabilities::{detect_capabilities, PlatformCapabilities};
+pub use cloud_detection::{
+    apply_cloud_config, detect_cloud_environment, generate_cloud_config, CloudConfig,
+    CloudInstanceInfo, CloudProvider,
+};
+pub use detection::{detect_platform, is_io_uring_available, PlatformInfo};
+pub use init::{initialize_platform, PlatformInit};
+pub use io_backend::{create_optimal_io_backend, IoBackend};
+pub use numa_management::{create_numa_manager, NumaManager, NumaStrategy};

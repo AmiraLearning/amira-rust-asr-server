@@ -4,11 +4,14 @@
 //! variables or defined as constants. This promotes the DRY principle and makes
 //! configuration changes easier to manage.
 
+use figment::{
+    providers::{Env, Format, Toml, Yaml},
+    Figment,
+};
+use serde::{Deserialize, Serialize};
 use std::env;
 use std::path::PathBuf;
 use std::time::Duration;
-use serde::{Deserialize, Serialize};
-use figment::{Figment, providers::{Env, Format, Toml, Yaml}};
 use tracing::debug;
 
 use crate::error::{AppError, Result};
@@ -208,24 +211,60 @@ pub mod timeouts {
 }
 
 // Default value functions for serde defaults
-fn default_max_concurrent_streams() -> usize { 10 }
-fn default_max_concurrent_batches() -> usize { 50 }
-fn default_inference_queue_size() -> usize { 100 }
-fn default_audio_buffer_capacity() -> usize { 1024 * 1024 } // 1MB
-fn default_max_batch_audio_length() -> f32 { 30.0 }
-fn default_stream_timeout_secs() -> u64 { 30 }
-fn default_keepalive_check_period_ms() -> u64 { 100 }
-fn default_preprocessor_model_name() -> String { "preprocessor".to_string() }
-fn default_encoder_model_name() -> String { "encoder".to_string() }
-fn default_decoder_joint_model_name() -> String { "decoder_joint".to_string() }
-fn default_max_symbols_per_step() -> usize { 30 }
-fn default_max_total_tokens() -> usize { 200 }
-fn default_enable_platform_optimizations() -> bool { true }
-fn default_disable_numa_in_cloud() -> bool { true }
-fn default_disable_cpu_affinity() -> bool { false }
-fn default_force_io_uring() -> bool { false }
-fn default_inference_backend() -> String { "grpc".to_string() }
-fn default_cuda_device_id() -> i32 { 0 }
+fn default_max_concurrent_streams() -> usize {
+    10
+}
+fn default_max_concurrent_batches() -> usize {
+    50
+}
+fn default_inference_queue_size() -> usize {
+    100
+}
+fn default_audio_buffer_capacity() -> usize {
+    1024 * 1024
+} // 1MB
+fn default_max_batch_audio_length() -> f32 {
+    30.0
+}
+fn default_stream_timeout_secs() -> u64 {
+    30
+}
+fn default_keepalive_check_period_ms() -> u64 {
+    100
+}
+fn default_preprocessor_model_name() -> String {
+    "preprocessor".to_string()
+}
+fn default_encoder_model_name() -> String {
+    "encoder".to_string()
+}
+fn default_decoder_joint_model_name() -> String {
+    "decoder_joint".to_string()
+}
+fn default_max_symbols_per_step() -> usize {
+    30
+}
+fn default_max_total_tokens() -> usize {
+    200
+}
+fn default_enable_platform_optimizations() -> bool {
+    true
+}
+fn default_disable_numa_in_cloud() -> bool {
+    true
+}
+fn default_disable_cpu_affinity() -> bool {
+    false
+}
+fn default_force_io_uring() -> bool {
+    false
+}
+fn default_inference_backend() -> String {
+    "grpc".to_string()
+}
+fn default_cuda_device_id() -> i32 {
+    0
+}
 
 /// Application configuration loaded from multiple sources
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -341,8 +380,11 @@ impl Config {
             .merge(Yaml::file("config.yaml"))
             .merge(Env::prefixed("AMIRA_"))
             .merge(Env::raw().only(&[
-                "SERVER_HOST", "SERVER_PORT", "TRITON_ENDPOINT", 
-                "INFERENCE_TIMEOUT_SECS", "VOCABULARY_PATH"
+                "SERVER_HOST",
+                "SERVER_PORT",
+                "TRITON_ENDPOINT",
+                "INFERENCE_TIMEOUT_SECS",
+                "VOCABULARY_PATH",
             ]))
             .extract()
             .map_err(|e| AppError::ConfigError(format!("Failed to load configuration: {}", e)))?;
@@ -354,7 +396,7 @@ impl Config {
     /// Generate default configuration values
     fn default_figment() -> Figment {
         use figment::providers::Serialized;
-        
+
         Figment::from(Serialized::defaults(Config {
             triton_endpoint: "http://localhost:8001".to_string(),
             vocabulary_path: PathBuf::from("../model-repo/vocab.txt"),
@@ -612,34 +654,34 @@ impl Config {
 
         Ok(())
     }
-    
+
     /// Export configuration to TOML format
     pub fn to_toml(&self) -> Result<String> {
         toml::to_string_pretty(self)
             .map_err(|e| AppError::ConfigError(format!("Failed to serialize to TOML: {}", e)))
     }
-    
+
     /// Export configuration to YAML format
     pub fn to_yaml(&self) -> Result<String> {
         serde_yaml::to_string(self)
             .map_err(|e| AppError::ConfigError(format!("Failed to serialize to YAML: {}", e)))
     }
-    
+
     /// Check if CUDA backend is enabled
     pub fn is_cuda_backend(&self) -> bool {
         self.inference_backend.to_lowercase() == "cuda"
     }
-    
+
     /// Check if gRPC backend is enabled
     pub fn is_grpc_backend(&self) -> bool {
         self.inference_backend.to_lowercase() == "grpc"
     }
-    
+
     /// Get the configured CUDA device ID
     pub fn get_cuda_device_id(&self) -> i32 {
         self.cuda_device_id
     }
-    
+
     /// Validate backend configuration
     pub fn validate_backend(&self) -> Result<()> {
         match self.inference_backend.to_lowercase().as_str() {
@@ -653,34 +695,36 @@ impl Config {
                     // Check if CUDA is available
                     if !crate::cuda::is_cuda_available() {
                         return Err(AppError::ConfigError(
-                            "CUDA backend selected but CUDA is not available".to_string()
+                            "CUDA backend selected but CUDA is not available".to_string(),
                         ));
                     }
-                    
+
                     // Check if device ID is valid
-                    let device_count = crate::cuda::get_cuda_device_count()
-                        .map_err(|e| AppError::ConfigError(format!("Failed to get CUDA device count: {}", e)))?;
-                    
+                    let device_count = crate::cuda::get_cuda_device_count().map_err(|e| {
+                        AppError::ConfigError(format!("Failed to get CUDA device count: {}", e))
+                    })?;
+
                     if self.cuda_device_id < 0 || self.cuda_device_id >= device_count {
                         return Err(AppError::ConfigError(format!(
                             "Invalid CUDA device ID: {} (available devices: 0-{})",
-                            self.cuda_device_id, device_count - 1
+                            self.cuda_device_id,
+                            device_count - 1
                         )));
                     }
-                    
+
                     Ok(())
                 }
                 #[cfg(not(feature = "cuda"))]
                 {
                     Err(AppError::ConfigError(
-                        "CUDA backend selected but CUDA support is not compiled in".to_string()
+                        "CUDA backend selected but CUDA support is not compiled in".to_string(),
                     ))
                 }
             }
             _ => Err(AppError::ConfigError(format!(
                 "Unknown inference backend: '{}'. Supported backends: 'grpc', 'cuda'",
                 self.inference_backend
-            )))
+            ))),
         }
     }
 }

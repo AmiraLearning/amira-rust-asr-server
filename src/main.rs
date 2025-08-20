@@ -11,7 +11,7 @@ use amira_rust_asr_server::{
     asr::{TritonAsrPipeline, Vocabulary},
     config::{concurrency::*, Config},
     error::{AppError, Result},
-    platform::{initialize_platform},
+    platform::initialize_platform,
     server::{create_router, AppState},
     triton::{ConnectionPool, PoolConfig},
 };
@@ -31,11 +31,11 @@ async fn main() -> Result<()> {
 
     // Load configuration
     let config = Config::load()?;
-    
+
     // Initialize platform detection and configuration optimization
     let platform_init = initialize_platform(config).await?;
     let config = platform_init.effective_config;
-    
+
     info!("Platform initialization complete");
 
     // Load vocabulary
@@ -47,20 +47,35 @@ async fn main() -> Result<()> {
     let shared_vocabulary = Arc::new(vocabulary);
 
     // Create ASR pipeline based on backend configuration
-    info!("DEBUG: inference_backend = '{}', is_cuda = {}", config.inference_backend, config.is_cuda_backend());
+    info!(
+        "DEBUG: inference_backend = '{}', is_cuda = {}",
+        config.inference_backend,
+        config.is_cuda_backend()
+    );
     let asr_pipeline = if config.is_cuda_backend() {
         #[cfg(feature = "cuda")]
         {
             info!("Using CUDA backend for in-process inference");
-            Arc::new(CudaAsrPipeline::new(0, shared_vocabulary.clone(), 16000.0, 1024)?) as Arc<dyn amira_rust_asr_server::asr::AsrPipeline + Send + Sync>
+            Arc::new(CudaAsrPipeline::new(
+                0,
+                shared_vocabulary.clone(),
+                16000.0,
+                1024,
+            )?) as Arc<dyn amira_rust_asr_server::asr::AsrPipeline + Send + Sync>
         }
         #[cfg(not(feature = "cuda"))]
         {
             use amira_rust_asr_server::error::ConfigError;
-            return Err(AppError::Config(ConfigError::Validation("CUDA backend requested but cuda feature not enabled. Build with --features cuda".to_string())));
+            return Err(AppError::Config(ConfigError::Validation(
+                "CUDA backend requested but cuda feature not enabled. Build with --features cuda"
+                    .to_string(),
+            )));
         }
     } else {
-        info!("Using gRPC backend with Triton connection pool for {}", config.triton_endpoint);
+        info!(
+            "Using gRPC backend with Triton connection pool for {}",
+            config.triton_endpoint
+        );
         let pool_config = PoolConfig {
             max_connections: MAX_CONCURRENT_STREAMS + MAX_CONCURRENT_BATCHES,
             min_connections: 5,
@@ -69,8 +84,11 @@ async fn main() -> Result<()> {
         let triton_pool = ConnectionPool::new(&config.triton_endpoint, pool_config)
             .await
             .map_err(AppError::from)?;
-        
-        Arc::new(TritonAsrPipeline::new(triton_pool, shared_vocabulary.clone())) as Arc<dyn amira_rust_asr_server::asr::AsrPipeline + Send + Sync>
+
+        Arc::new(TritonAsrPipeline::new(
+            triton_pool,
+            shared_vocabulary.clone(),
+        )) as Arc<dyn amira_rust_asr_server::asr::AsrPipeline + Send + Sync>
     };
 
     // Create application state

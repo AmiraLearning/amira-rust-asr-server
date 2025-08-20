@@ -4,9 +4,9 @@
 //! for managing resources like connections, memory pools, and locks.
 
 // No specific error imports needed for this module
-use std::sync::Arc;
-use std::ops::{Deref, DerefMut};
 use std::marker::PhantomData;
+use std::ops::{Deref, DerefMut};
+use std::sync::Arc;
 
 /// A pooled resource that is automatically returned to the pool when dropped.
 pub struct PooledResource<T, P>
@@ -28,12 +28,12 @@ where
             pool,
         }
     }
-    
+
     /// Take the resource out of the pool (prevents automatic return).
     pub fn take(mut self) -> T {
         self.resource.take().expect("Resource already taken")
     }
-    
+
     /// Check if the resource is still available.
     pub fn is_available(&self) -> bool {
         self.resource.is_some()
@@ -56,7 +56,7 @@ where
     P: ResourcePool<T>,
 {
     type Target = T;
-    
+
     fn deref(&self) -> &Self::Target {
         self.resource.as_ref().expect("Resource not available")
     }
@@ -75,7 +75,7 @@ where
 pub trait ResourcePool<T>: Send + Sync {
     /// Return a resource to the pool.
     fn return_resource(&self, resource: T);
-    
+
     /// Get pool statistics.
     fn pool_stats(&self) -> PoolStats;
 }
@@ -120,12 +120,12 @@ impl<T> PooledConnection<T> {
             pool,
         }
     }
-    
+
     /// Take the connection out of the pool.
     pub fn take(mut self) -> T {
         self.inner.take().expect("Connection already taken")
     }
-    
+
     /// Check if the connection is healthy.
     pub fn is_healthy(&self) -> bool {
         self.inner.is_some()
@@ -142,7 +142,7 @@ impl<T> Drop for PooledConnection<T> {
 
 impl<T> Deref for PooledConnection<T> {
     type Target = T;
-    
+
     fn deref(&self) -> &Self::Target {
         self.inner.as_ref().expect("Connection not available")
     }
@@ -158,10 +158,10 @@ impl<T> DerefMut for PooledConnection<T> {
 pub trait ConnectionPool<T>: Send + Sync {
     /// Return a connection to the pool.
     fn return_connection(&self, connection: T);
-    
+
     /// Get a connection from the pool.
     fn get_connection(&self) -> Option<PooledConnection<T>>;
-    
+
     /// Get pool statistics.
     fn stats(&self) -> PoolStats;
 }
@@ -180,29 +180,29 @@ impl<T> PooledBuffer<T> {
             pool,
         }
     }
-    
+
     /// Take the buffer out of the pool.
     pub fn take(mut self) -> Vec<T> {
         self.buffer.take().expect("Buffer already taken")
     }
-    
+
     /// Clear the buffer without returning it to the pool.
     pub fn clear(&mut self) {
         if let Some(ref mut buffer) = self.buffer {
             buffer.clear();
         }
     }
-    
+
     /// Get the buffer capacity.
     pub fn capacity(&self) -> usize {
         self.buffer.as_ref().map_or(0, |b| b.capacity())
     }
-    
+
     /// Get the buffer length.
     pub fn len(&self) -> usize {
         self.buffer.as_ref().map_or(0, |b| b.len())
     }
-    
+
     /// Check if the buffer is empty.
     pub fn is_empty(&self) -> bool {
         self.buffer.as_ref().map_or(true, |b| b.is_empty())
@@ -219,7 +219,7 @@ impl<T> Drop for PooledBuffer<T> {
 
 impl<T> Deref for PooledBuffer<T> {
     type Target = Vec<T>;
-    
+
     fn deref(&self) -> &Self::Target {
         self.buffer.as_ref().expect("Buffer not available")
     }
@@ -235,13 +235,13 @@ impl<T> DerefMut for PooledBuffer<T> {
 pub trait BufferPool<T>: Send + Sync {
     /// Return a buffer to the pool.
     fn return_buffer(&self, buffer: Vec<T>);
-    
+
     /// Get a buffer from the pool.
     fn get_buffer(&self) -> Option<PooledBuffer<T>>;
-    
+
     /// Get a buffer with a specific capacity.
     fn get_buffer_with_capacity(&self, capacity: usize) -> Option<PooledBuffer<T>>;
-    
+
     /// Get pool statistics.
     fn stats(&self) -> PoolStats;
 }
@@ -266,18 +266,18 @@ where
             cleanup: Some(cleanup),
         }
     }
-    
+
     /// Take the resource and disable cleanup.
     pub fn take(mut self) -> T {
         self.cleanup.take(); // Disable cleanup
         self.resource.take().expect("Resource already taken")
     }
-    
+
     /// Get a reference to the resource.
     pub fn get(&self) -> &T {
         self.resource.as_ref().expect("Resource not available")
     }
-    
+
     /// Get a mutable reference to the resource.
     pub fn get_mut(&mut self) -> &mut T {
         self.resource.as_mut().expect("Resource not available")
@@ -300,7 +300,7 @@ where
     F: FnOnce(T),
 {
     type Target = T;
-    
+
     fn deref(&self) -> &Self::Target {
         self.get()
     }
@@ -332,7 +332,7 @@ impl<T> ScopedResource<T> {
             cleanup: Some(Box::new(cleanup)),
         }
     }
-    
+
     /// Take the resource and disable cleanup.
     pub fn take(mut self) -> T {
         self.cleanup.take();
@@ -342,13 +342,15 @@ impl<T> ScopedResource<T> {
 
 impl<T> Drop for ScopedResource<T> {
     fn drop(&mut self) {
-        if let Some(c) = self.cleanup.take() { c(); }
+        if let Some(c) = self.cleanup.take() {
+            c();
+        }
     }
 }
 
 impl<T> Deref for ScopedResource<T> {
     type Target = T;
-    
+
     fn deref(&self) -> &Self::Target {
         self.resource.as_ref().expect("Resource not available")
     }
@@ -370,9 +372,9 @@ pub struct LockGuard<T, L> {
 
 impl<T, L> LockGuard<T, L> {
     /// Create a new lock guard.
-    /// 
+    ///
     /// # Safety
-    /// 
+    ///
     /// The caller must ensure that:
     /// - `data` points to valid memory
     /// - The lock `L` properly protects access to `data`
@@ -388,7 +390,7 @@ impl<T, L> LockGuard<T, L> {
 
 impl<T, L> Deref for LockGuard<T, L> {
     type Target = T;
-    
+
     fn deref(&self) -> &Self::Target {
         unsafe { &*self.data }
     }
@@ -401,10 +403,20 @@ impl<T, L> DerefMut for LockGuard<T, L> {
 }
 
 // Safety: LockGuard is safe to send between threads as long as T and L are Send
-unsafe impl<T, L> Send for LockGuard<T, L> where T: Send, L: Send {}
+unsafe impl<T, L> Send for LockGuard<T, L>
+where
+    T: Send,
+    L: Send,
+{
+}
 
 // Safety: LockGuard is safe to share between threads as long as T and L are Sync
-unsafe impl<T, L> Sync for LockGuard<T, L> where T: Sync, L: Sync {}
+unsafe impl<T, L> Sync for LockGuard<T, L>
+where
+    T: Sync,
+    L: Sync,
+{
+}
 
 /// A timer that measures elapsed time and executes cleanup on drop.
 pub struct Timer {
@@ -423,7 +435,7 @@ impl Timer {
             cleanup: None,
         }
     }
-    
+
     /// Create a timer with a cleanup function.
     pub fn with_cleanup<F>(name: impl Into<String>, cleanup: F) -> Self
     where
@@ -435,12 +447,12 @@ impl Timer {
             cleanup: Some(Box::new(cleanup)),
         }
     }
-    
+
     /// Get the elapsed time.
     pub fn elapsed(&self) -> std::time::Duration {
         self.start_time.elapsed()
     }
-    
+
     /// Stop the timer and return the elapsed time.
     pub fn stop(mut self) -> std::time::Duration {
         let elapsed = self.elapsed();
@@ -482,30 +494,30 @@ macro_rules! with_pooled_resource {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Arc, Mutex};
     use std::sync::atomic::{AtomicUsize, Ordering};
-    
+    use std::sync::{Arc, Mutex};
+
     struct MockPool {
         returned_count: Arc<AtomicUsize>,
     }
-    
+
     impl MockPool {
         fn new() -> Self {
             Self {
                 returned_count: Arc::new(AtomicUsize::new(0)),
             }
         }
-        
+
         fn returned_count(&self) -> usize {
             self.returned_count.load(Ordering::SeqCst)
         }
     }
-    
+
     impl ResourcePool<String> for MockPool {
         fn return_resource(&self, _resource: String) {
             self.returned_count.fetch_add(1, Ordering::SeqCst);
         }
-        
+
         fn pool_stats(&self) -> PoolStats {
             PoolStats {
                 total_resources: 10,
@@ -516,39 +528,39 @@ mod tests {
             }
         }
     }
-    
+
     #[test]
     fn test_pooled_resource_automatic_return() {
         let pool = Arc::new(MockPool::new());
         let resource = "test_resource".to_string();
-        
+
         {
             let _pooled = PooledResource::new(resource, pool.clone());
             // Resource should be automatically returned when dropped
         }
-        
+
         assert_eq!(pool.returned_count(), 1);
     }
-    
+
     #[test]
     fn test_pooled_resource_take() {
         let pool = Arc::new(MockPool::new());
         let resource = "test_resource".to_string();
-        
+
         {
             let pooled = PooledResource::new(resource, pool.clone());
             let _taken = pooled.take();
             // Resource should not be returned because it was taken
         }
-        
+
         assert_eq!(pool.returned_count(), 0);
     }
-    
+
     #[test]
     fn test_resource_guard_cleanup() {
         let cleanup_called = Arc::new(AtomicUsize::new(0));
         let cleanup_called_clone = cleanup_called.clone();
-        
+
         {
             let resource = "test_resource".to_string();
             let _guard = ResourceGuard::new(resource, move |_| {
@@ -556,15 +568,15 @@ mod tests {
             });
             // Cleanup should be called when guard is dropped
         }
-        
+
         assert_eq!(cleanup_called.load(Ordering::SeqCst), 1);
     }
-    
+
     #[test]
     fn test_resource_guard_take() {
         let cleanup_called = Arc::new(AtomicUsize::new(0));
         let cleanup_called_clone = cleanup_called.clone();
-        
+
         {
             let resource = "test_resource".to_string();
             let guard = ResourceGuard::new(resource, move |_| {
@@ -573,10 +585,10 @@ mod tests {
             let _taken = guard.take();
             // Cleanup should not be called because resource was taken
         }
-        
+
         assert_eq!(cleanup_called.load(Ordering::SeqCst), 0);
     }
-    
+
     #[test]
     fn test_timer_elapsed() {
         let timer = Timer::new("test_timer");
@@ -584,22 +596,22 @@ mod tests {
         let elapsed = timer.elapsed();
         assert!(elapsed >= std::time::Duration::from_millis(10));
     }
-    
+
     #[test]
     fn test_timer_with_cleanup() {
         let cleanup_called = Arc::new(Mutex::new(false));
         let cleanup_called_clone = cleanup_called.clone();
-        
+
         {
             let _timer = Timer::with_cleanup("test_timer", move |_duration| {
                 *cleanup_called_clone.lock().unwrap() = true;
             });
             // Cleanup should be called when timer is dropped
         }
-        
+
         assert!(*cleanup_called.lock().unwrap());
     }
-    
+
     #[test]
     fn test_pool_stats_utilization() {
         let stats = PoolStats {
@@ -609,7 +621,7 @@ mod tests {
             total_created: 10,
             total_destroyed: 0,
         };
-        
+
         assert_eq!(stats.utilization_rate(), 0.7);
     }
 }

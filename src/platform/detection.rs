@@ -76,7 +76,7 @@ impl KernelVersion {
 /// Detect the current platform and its capabilities
 pub fn detect_platform() -> PlatformInfo {
     info!("Detecting platform capabilities...");
-    
+
     let os = detect_operating_system();
     let kernel_version = if matches!(os, OperatingSystem::Linux) {
         detect_kernel_version()
@@ -102,7 +102,7 @@ pub fn detect_platform() -> PlatformInfo {
 /// Check if io_uring is available and recommended on this platform
 pub fn is_io_uring_available() -> bool {
     let platform = detect_platform();
-    
+
     // Only available on Linux
     if !matches!(platform.os, OperatingSystem::Linux) {
         debug!("io_uring not available: not running on Linux");
@@ -112,29 +112,35 @@ pub fn is_io_uring_available() -> bool {
     // Check kernel version
     if let Some(kernel) = &platform.kernel_version {
         if !kernel.supports_io_uring() {
-            debug!("io_uring not available: kernel version {} too old (requires >= 5.1)", 
-                format_kernel_version(kernel));
+            debug!(
+                "io_uring not available: kernel version {} too old (requires >= 5.1)",
+                format_kernel_version(kernel)
+            );
             return false;
         }
-        
+
         if !kernel.has_stable_io_uring() {
-            warn!("io_uring available but unstable: kernel version {} (stable >= 5.4)",
-                format_kernel_version(kernel));
+            warn!(
+                "io_uring available but unstable: kernel version {} (stable >= 5.4)",
+                format_kernel_version(kernel)
+            );
         }
     }
 
     // Check if it's disabled in virtualized environments
     match platform.virtualization {
-        VirtualizationEnvironment::AWS | 
-        VirtualizationEnvironment::GCP | 
-        VirtualizationEnvironment::Azure => {
-            debug!("io_uring available but may have limited performance in cloud environment: {:?}", 
-                platform.virtualization);
+        VirtualizationEnvironment::AWS
+        | VirtualizationEnvironment::GCP
+        | VirtualizationEnvironment::Azure => {
+            debug!(
+                "io_uring available but may have limited performance in cloud environment: {:?}",
+                platform.virtualization
+            );
             // Still return true but with warning - let configuration decide
-        },
+        }
         VirtualizationEnvironment::Docker => {
             debug!("io_uring available in Docker, performance depends on host kernel");
-        },
+        }
         _ => {}
     }
 
@@ -184,7 +190,7 @@ fn parse_kernel_version_string(version_str: &str) -> Option<KernelVersion> {
     // Parse version string like "5.15.0-72-generic" or "5.15.0"
     let version_part = version_str.split('-').next()?;
     let parts: Vec<&str> = version_part.split('.').collect();
-    
+
     if parts.len() >= 2 {
         let major = parts[0].parse().ok()?;
         let minor = parts[1].parse().ok()?;
@@ -193,8 +199,12 @@ fn parse_kernel_version_string(version_str: &str) -> Option<KernelVersion> {
         } else {
             0
         };
-        
-        Some(KernelVersion { major, minor, patch })
+
+        Some(KernelVersion {
+            major,
+            minor,
+            patch,
+        })
     } else {
         None
     }
@@ -252,7 +262,7 @@ fn detect_virtualization_environment() -> VirtualizationEnvironment {
 #[cfg(target_arch = "x86_64")]
 fn is_hypervisor_present() -> bool {
     use std::arch::x86_64::__cpuid;
-    
+
     // CPUID leaf 1, ECX bit 31 indicates hypervisor present
     unsafe {
         let cpuid_result = __cpuid(1);
@@ -260,7 +270,10 @@ fn is_hypervisor_present() -> bool {
     }
 }
 
-fn detect_available_io_backends(os: &OperatingSystem, kernel_version: &Option<KernelVersion>) -> Vec<IoBackendType> {
+fn detect_available_io_backends(
+    os: &OperatingSystem,
+    kernel_version: &Option<KernelVersion>,
+) -> Vec<IoBackendType> {
     let mut backends = Vec::new();
 
     match os {
@@ -273,19 +286,19 @@ fn detect_available_io_backends(os: &OperatingSystem, kernel_version: &Option<Ke
             }
             // Epoll is always available on Linux
             backends.push(IoBackendType::Epoll);
-        },
+        }
         OperatingSystem::MacOS | OperatingSystem::FreeBSD => {
             // Kqueue is available on BSD-based systems
             backends.push(IoBackendType::Kqueue);
-        },
+        }
         OperatingSystem::Windows => {
             // Windows has its own mechanisms, but we'll use select as fallback
             backends.push(IoBackendType::Select);
-        },
+        }
         OperatingSystem::Other(_) => {
             // Fallback to select for unknown systems
             backends.push(IoBackendType::Select);
-        },
+        }
     }
 
     // Select is always available as ultimate fallback
@@ -302,10 +315,10 @@ fn check_io_uring_runtime_availability() -> bool {
     {
         // This is a simple check - in a real implementation we'd use io_uring crate
         // For now, we'll check for the existence of io_uring related files
-        std::path::Path::new("/proc/sys/kernel/io_uring_disabled").exists() ||
-        std::path::Path::new("/sys/kernel/debug/io_uring").exists()
+        std::path::Path::new("/proc/sys/kernel/io_uring_disabled").exists()
+            || std::path::Path::new("/sys/kernel/debug/io_uring").exists()
     }
-    
+
     #[cfg(not(target_os = "linux"))]
     {
         false

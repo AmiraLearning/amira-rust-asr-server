@@ -7,8 +7,8 @@
 use std::fs;
 use tracing::{debug, info, warn};
 
+use super::detection::{PlatformInfo, VirtualizationEnvironment};
 use crate::error::{AppError, Result};
-use super::detection::{VirtualizationEnvironment, PlatformInfo};
 
 /// Cloud provider detection results
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -84,7 +84,7 @@ pub enum NetworkStrategy {
 /// Comprehensive cloud environment detection
 pub async fn detect_cloud_environment(platform: &PlatformInfo) -> Result<CloudInstanceInfo> {
     info!("Detecting cloud environment...");
-    
+
     let mut cloud_info = CloudInstanceInfo {
         provider: CloudProvider::Unknown,
         instance_type: None,
@@ -94,14 +94,14 @@ pub async fn detect_cloud_environment(platform: &PlatformInfo) -> Result<CloudIn
         metadata_available: false,
         dmi_detection: false,
     };
-    
+
     // Try DMI-based detection first (works even without network access)
     if let Ok(dmi_info) = detect_via_dmi() {
         cloud_info.provider = dmi_info.provider;
         cloud_info.dmi_detection = true;
         debug!("DMI detection: {:?}", dmi_info.provider);
     }
-    
+
     // Try metadata service detection (more detailed information)
     // TODO: Re-enable when reqwest dependency is properly configured
     /*
@@ -111,14 +111,14 @@ pub async fn detect_cloud_environment(platform: &PlatformInfo) -> Result<CloudIn
         cloud_info.availability_zone = metadata_info.availability_zone;
         cloud_info.region = metadata_info.region;
         cloud_info.metadata_available = true;
-        
+
         // Update provider if metadata detection found something more specific
         if cloud_info.provider == CloudProvider::Unknown {
             cloud_info.provider = metadata_info.provider;
         }
     }
     */
-    
+
     // Fallback to virtualization environment detection
     if cloud_info.provider == CloudProvider::Unknown {
         cloud_info.provider = match platform.virtualization {
@@ -128,7 +128,7 @@ pub async fn detect_cloud_environment(platform: &PlatformInfo) -> Result<CloudIn
             _ => CloudProvider::Unknown,
         };
     }
-    
+
     info!(
         "Cloud detection complete: provider={:?}, instance_type={:?}, dmi={}, metadata={}",
         cloud_info.provider,
@@ -136,14 +136,14 @@ pub async fn detect_cloud_environment(platform: &PlatformInfo) -> Result<CloudIn
         cloud_info.dmi_detection,
         cloud_info.metadata_available
     );
-    
+
     Ok(cloud_info)
 }
 
 /// Detect cloud provider via DMI (System Management BIOS) information
 fn detect_via_dmi() -> Result<CloudInstanceInfo> {
     let mut provider = CloudProvider::Unknown;
-    
+
     // Check DMI system information
     if let Ok(vendor) = read_dmi_field("sys_vendor") {
         provider = match vendor.to_lowercase().as_str() {
@@ -156,7 +156,7 @@ fn detect_via_dmi() -> Result<CloudInstanceInfo> {
             _ => CloudProvider::Unknown,
         };
     }
-    
+
     // Check product name if vendor didn't match
     if provider == CloudProvider::Unknown {
         if let Ok(product) = read_dmi_field("product_name") {
@@ -169,7 +169,7 @@ fn detect_via_dmi() -> Result<CloudInstanceInfo> {
             };
         }
     }
-    
+
     // Check BIOS vendor
     if provider == CloudProvider::Unknown {
         if let Ok(bios_vendor) = read_dmi_field("bios_vendor") {
@@ -181,7 +181,7 @@ fn detect_via_dmi() -> Result<CloudInstanceInfo> {
             };
         }
     }
-    
+
     Ok(CloudInstanceInfo {
         provider,
         instance_type: None,
@@ -205,31 +205,45 @@ fn read_dmi_field(field: &str) -> Result<String> {
 #[allow(dead_code)]
 async fn detect_via_metadata(_hint: &CloudProvider) -> Result<CloudInstanceInfo> {
     // TODO: Implement when reqwest dependency is properly configured
-    Err(crate::error::AppError::Internal("Metadata detection not implemented".to_string()))
+    Err(crate::error::AppError::Internal(
+        "Metadata detection not implemented".to_string(),
+    ))
 }
 
 /// Detect AWS EC2 metadata (disabled)
 #[allow(dead_code)]
 async fn detect_aws_metadata() -> Result<CloudInstanceInfo> {
-    Err(AppError::Internal("AWS metadata detection not implemented".to_string()))
+    Err(AppError::Internal(
+        "AWS metadata detection not implemented".to_string(),
+    ))
 }
 
 /// Detect GCP metadata (disabled)
 #[allow(dead_code)]
 async fn detect_gcp_metadata() -> Result<CloudInstanceInfo> {
-    Err(AppError::Internal("GCP metadata detection not implemented".to_string()))
+    Err(AppError::Internal(
+        "GCP metadata detection not implemented".to_string(),
+    ))
 }
 
 /// Detect Azure metadata (disabled)
 #[allow(dead_code)]
 async fn detect_azure_metadata() -> Result<CloudInstanceInfo> {
-    Err(AppError::Internal("Azure metadata detection not implemented".to_string()))
+    Err(AppError::Internal(
+        "Azure metadata detection not implemented".to_string(),
+    ))
 }
 
 /// Generate cloud-specific configuration recommendations
-pub fn generate_cloud_config(cloud_info: &CloudInstanceInfo, platform: &PlatformInfo) -> CloudConfig {
-    info!("Generating cloud-specific configuration for {:?}", cloud_info.provider);
-    
+pub fn generate_cloud_config(
+    cloud_info: &CloudInstanceInfo,
+    platform: &PlatformInfo,
+) -> CloudConfig {
+    info!(
+        "Generating cloud-specific configuration for {:?}",
+        cloud_info.provider
+    );
+
     match cloud_info.provider {
         CloudProvider::AWS => generate_aws_config(cloud_info, platform),
         CloudProvider::GCP => generate_gcp_config(cloud_info, platform),
@@ -242,9 +256,9 @@ pub fn generate_cloud_config(cloud_info: &CloudInstanceInfo, platform: &Platform
 /// AWS-specific configuration
 fn generate_aws_config(cloud_info: &CloudInstanceInfo, _platform: &PlatformInfo) -> CloudConfig {
     let instance_type = cloud_info.instance_type.as_deref().unwrap_or("");
-    
+
     // Parse instance family and size
-    let (disable_numa, disable_cpu_affinity, memory_strategy, max_streams) = 
+    let (disable_numa, disable_cpu_affinity, memory_strategy, max_streams) =
         if instance_type.starts_with("t") {
             // Burstable instances (t2, t3, t4g) - very conservative
             (true, true, MemoryStrategy::Conservative, Some(4))
@@ -261,7 +275,7 @@ fn generate_aws_config(cloud_info: &CloudInstanceInfo, _platform: &PlatformInfo)
             // Unknown instance type - conservative approach
             (true, true, MemoryStrategy::Conservative, Some(4))
         };
-    
+
     CloudConfig {
         disable_numa,
         disable_cpu_affinity,
@@ -275,25 +289,24 @@ fn generate_aws_config(cloud_info: &CloudInstanceInfo, _platform: &PlatformInfo)
 /// GCP-specific configuration
 fn generate_gcp_config(cloud_info: &CloudInstanceInfo, _platform: &PlatformInfo) -> CloudConfig {
     let machine_type = cloud_info.instance_type.as_deref().unwrap_or("");
-    
-    let (disable_numa, memory_strategy, max_streams) = 
-        if machine_type.contains("e2-") {
-            // E2 instances - cost-optimized, shared CPU
-            (true, MemoryStrategy::Conservative, Some(4))
-        } else if machine_type.contains("n1-") || machine_type.contains("n2-") {
-            // N1/N2 instances - general purpose
-            (false, MemoryStrategy::Standard, Some(6))
-        } else if machine_type.contains("c2-") {
-            // C2 instances - compute optimized
-            (false, MemoryStrategy::Standard, Some(8))
-        } else if machine_type.contains("m1-") || machine_type.contains("m2-") {
-            // Memory optimized instances
-            (false, MemoryStrategy::Standard, Some(10))
-        } else {
-            // Unknown machine type
-            (true, MemoryStrategy::Conservative, Some(4))
-        };
-    
+
+    let (disable_numa, memory_strategy, max_streams) = if machine_type.contains("e2-") {
+        // E2 instances - cost-optimized, shared CPU
+        (true, MemoryStrategy::Conservative, Some(4))
+    } else if machine_type.contains("n1-") || machine_type.contains("n2-") {
+        // N1/N2 instances - general purpose
+        (false, MemoryStrategy::Standard, Some(6))
+    } else if machine_type.contains("c2-") {
+        // C2 instances - compute optimized
+        (false, MemoryStrategy::Standard, Some(8))
+    } else if machine_type.contains("m1-") || machine_type.contains("m2-") {
+        // Memory optimized instances
+        (false, MemoryStrategy::Standard, Some(10))
+    } else {
+        // Unknown machine type
+        (true, MemoryStrategy::Conservative, Some(4))
+    };
+
     CloudConfig {
         disable_numa,
         disable_cpu_affinity: false, // GCP generally has good CPU isolation
@@ -307,24 +320,23 @@ fn generate_gcp_config(cloud_info: &CloudInstanceInfo, _platform: &PlatformInfo)
 /// Azure-specific configuration
 fn generate_azure_config(cloud_info: &CloudInstanceInfo, _platform: &PlatformInfo) -> CloudConfig {
     let vm_size = cloud_info.instance_type.as_deref().unwrap_or("");
-    
-    let (memory_strategy, max_streams) = 
-        if vm_size.starts_with("Standard_B") {
-            // Burstable instances
-            (MemoryStrategy::Conservative, Some(4))
-        } else if vm_size.starts_with("Standard_F") {
-            // Compute optimized
-            (MemoryStrategy::Standard, Some(8))
-        } else if vm_size.starts_with("Standard_D") || vm_size.starts_with("Standard_E") {
-            // General purpose and memory optimized
-            (MemoryStrategy::Standard, Some(6))
-        } else {
-            // Unknown VM size
-            (MemoryStrategy::Conservative, Some(4))
-        };
-    
+
+    let (memory_strategy, max_streams) = if vm_size.starts_with("Standard_B") {
+        // Burstable instances
+        (MemoryStrategy::Conservative, Some(4))
+    } else if vm_size.starts_with("Standard_F") {
+        // Compute optimized
+        (MemoryStrategy::Standard, Some(8))
+    } else if vm_size.starts_with("Standard_D") || vm_size.starts_with("Standard_E") {
+        // General purpose and memory optimized
+        (MemoryStrategy::Standard, Some(6))
+    } else {
+        // Unknown VM size
+        (MemoryStrategy::Conservative, Some(4))
+    };
+
     CloudConfig {
-        disable_numa: true, // Azure virtualization often interferes with NUMA
+        disable_numa: true,         // Azure virtualization often interferes with NUMA
         disable_cpu_affinity: true, // Hyper-V can cause issues with CPU affinity
         preferred_io_backend: Some("epoll".to_string()),
         max_concurrent_streams: max_streams,
@@ -334,7 +346,10 @@ fn generate_azure_config(cloud_info: &CloudInstanceInfo, _platform: &PlatformInf
 }
 
 /// DigitalOcean-specific configuration
-fn generate_digitalocean_config(_cloud_info: &CloudInstanceInfo, _platform: &PlatformInfo) -> CloudConfig {
+fn generate_digitalocean_config(
+    _cloud_info: &CloudInstanceInfo,
+    _platform: &PlatformInfo,
+) -> CloudConfig {
     CloudConfig {
         disable_numa: true, // DigitalOcean droplets are virtualized
         disable_cpu_affinity: true,
@@ -346,7 +361,10 @@ fn generate_digitalocean_config(_cloud_info: &CloudInstanceInfo, _platform: &Pla
 }
 
 /// Generic cloud configuration for unknown providers
-fn generate_generic_cloud_config(_cloud_info: &CloudInstanceInfo, _platform: &PlatformInfo) -> CloudConfig {
+fn generate_generic_cloud_config(
+    _cloud_info: &CloudInstanceInfo,
+    _platform: &PlatformInfo,
+) -> CloudConfig {
     CloudConfig {
         disable_numa: true, // Conservative approach for unknown cloud
         disable_cpu_affinity: true,
@@ -360,18 +378,18 @@ fn generate_generic_cloud_config(_cloud_info: &CloudInstanceInfo, _platform: &Pl
 /// Apply cloud configuration to application settings
 pub fn apply_cloud_config(config: &CloudConfig, app_config: &mut crate::config::Config) {
     info!("Applying cloud-specific configuration optimizations...");
-    
+
     // Apply NUMA and CPU affinity settings
     if config.disable_numa {
         info!("Disabling NUMA optimizations for cloud environment");
         app_config.disable_numa_in_cloud = true;
     }
-    
+
     if config.disable_cpu_affinity {
         info!("Disabling CPU affinity optimizations for cloud environment");
         app_config.disable_cpu_affinity = true;
     }
-    
+
     // Apply I/O backend preference
     if let Some(backend) = &config.preferred_io_backend {
         if app_config.force_io_backend.is_none() {
@@ -379,7 +397,7 @@ pub fn apply_cloud_config(config: &CloudConfig, app_config: &mut crate::config::
             app_config.force_io_backend = Some(backend.clone());
         }
     }
-    
+
     // Apply concurrency limits
     if let Some(max_streams) = config.max_concurrent_streams {
         if app_config.max_concurrent_streams > max_streams {
@@ -390,7 +408,7 @@ pub fn apply_cloud_config(config: &CloudConfig, app_config: &mut crate::config::
             app_config.max_concurrent_streams = max_streams;
         }
     }
-    
+
     // Apply memory strategy
     match config.memory_strategy {
         MemoryStrategy::Conservative => {
@@ -438,7 +456,7 @@ mod tests {
     #[test]
     fn test_cloud_config_generation() {
         let platform = detect_platform();
-        
+
         let aws_info = CloudInstanceInfo {
             provider: CloudProvider::AWS,
             instance_type: Some("c5.xlarge".to_string()),
@@ -448,9 +466,9 @@ mod tests {
             metadata_available: true,
             dmi_detection: false,
         };
-        
+
         let config = generate_cloud_config(&aws_info, &platform);
-        
+
         // C5 instances should have specific optimizations
         assert_eq!(config.disable_numa, false);
         assert_eq!(config.disable_cpu_affinity, false);
@@ -461,7 +479,7 @@ mod tests {
     #[test]
     fn test_azure_config() {
         let platform = detect_platform();
-        
+
         let azure_info = CloudInstanceInfo {
             provider: CloudProvider::Azure,
             instance_type: Some("Standard_D4s_v3".to_string()),
@@ -471,9 +489,9 @@ mod tests {
             metadata_available: true,
             dmi_detection: false,
         };
-        
+
         let config = generate_cloud_config(&azure_info, &platform);
-        
+
         // Azure should disable NUMA and CPU affinity due to Hyper-V
         assert_eq!(config.disable_numa, true);
         assert_eq!(config.disable_cpu_affinity, true);
@@ -482,7 +500,7 @@ mod tests {
     #[test]
     fn test_burstable_instance_config() {
         let platform = detect_platform();
-        
+
         let aws_burstable = CloudInstanceInfo {
             provider: CloudProvider::AWS,
             instance_type: Some("t3.medium".to_string()),
@@ -492,9 +510,9 @@ mod tests {
             metadata_available: true,
             dmi_detection: false,
         };
-        
+
         let config = generate_cloud_config(&aws_burstable, &platform);
-        
+
         // Burstable instances should be very conservative
         assert_eq!(config.disable_numa, true);
         assert_eq!(config.disable_cpu_affinity, true);

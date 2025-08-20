@@ -46,27 +46,27 @@ impl CpuSet {
             current_index: AtomicUsize::new(0),
         }
     }
-    
+
     /// Get the next core in round-robin fashion
     pub fn next_core(&self) -> Option<CoreId> {
         if self.cores.is_empty() {
             return None;
         }
-        
+
         let index = self.current_index.fetch_add(1, Ordering::Relaxed);
         Some(self.cores[index % self.cores.len()])
     }
-    
+
     /// Get all cores in this set
     pub fn cores(&self) -> &[CoreId] {
         &self.cores
     }
-    
+
     /// Get the number of cores in this set
     pub fn len(&self) -> usize {
         self.cores.len()
     }
-    
+
     /// Check if the set is empty
     pub fn is_empty(&self) -> bool {
         self.cores.is_empty()
@@ -77,10 +77,10 @@ impl CpuSet {
 pub struct AffinityManager {
     /// Available CPU cores
     available_cores: Vec<CoreId>,
-    
+
     /// CPU sets assigned to different thread types
     thread_type_cores: HashMap<ThreadType, CpuSet>,
-    
+
     /// Whether the system supports CPU affinity
     affinity_supported: bool,
 }
@@ -90,7 +90,7 @@ impl AffinityManager {
     pub fn new() -> Self {
         let available_cores = core_affinity::get_core_ids().unwrap_or_default();
         let affinity_supported = !available_cores.is_empty();
-        
+
         if affinity_supported {
             info!(
                 "CPU affinity manager initialized with {} cores: {:?}",
@@ -100,35 +100,39 @@ impl AffinityManager {
         } else {
             warn!("CPU affinity not supported on this platform");
         }
-        
+
         let mut manager = Self {
             available_cores: available_cores.clone(),
             thread_type_cores: HashMap::new(),
             affinity_supported,
         };
-        
+
         // Automatically assign cores based on system topology
         manager.auto_assign_cores();
-        
+
         manager
     }
-    
+
     /// Automatically assign cores to thread types based on system characteristics
     fn auto_assign_cores(&mut self) {
         if !self.affinity_supported || self.available_cores.is_empty() {
             return;
         }
-        
+
         let total_cores = self.available_cores.len();
-        
+
         match total_cores {
             1..=2 => {
                 // Very small systems - share cores
                 let all_cores = CpuSet::new(self.available_cores.clone());
-                self.thread_type_cores.insert(ThreadType::Io, all_cores.clone());
-                self.thread_type_cores.insert(ThreadType::Inference, all_cores.clone());
-                self.thread_type_cores.insert(ThreadType::Network, all_cores.clone());
-                self.thread_type_cores.insert(ThreadType::Background, all_cores);
+                self.thread_type_cores
+                    .insert(ThreadType::Io, all_cores.clone());
+                self.thread_type_cores
+                    .insert(ThreadType::Inference, all_cores.clone());
+                self.thread_type_cores
+                    .insert(ThreadType::Network, all_cores.clone());
+                self.thread_type_cores
+                    .insert(ThreadType::Background, all_cores);
             }
             3..=4 => {
                 // Small systems - dedicate some cores to inference
@@ -136,28 +140,32 @@ impl AffinityManager {
                 let inference_cores = CpuSet::new(self.available_cores[1..].to_vec());
                 let network_cores = CpuSet::new(vec![self.available_cores[0]]);
                 let background_cores = CpuSet::new(vec![self.available_cores[0]]);
-                
+
                 self.thread_type_cores.insert(ThreadType::Io, io_cores);
-                self.thread_type_cores.insert(ThreadType::Inference, inference_cores);
-                self.thread_type_cores.insert(ThreadType::Network, network_cores);
-                self.thread_type_cores.insert(ThreadType::Background, background_cores);
+                self.thread_type_cores
+                    .insert(ThreadType::Inference, inference_cores);
+                self.thread_type_cores
+                    .insert(ThreadType::Network, network_cores);
+                self.thread_type_cores
+                    .insert(ThreadType::Background, background_cores);
             }
             5..=8 => {
                 // Medium systems - better separation
                 let cores_per_type = total_cores / 3;
                 let io_cores = CpuSet::new(self.available_cores[0..1].to_vec());
-                let inference_cores = CpuSet::new(
-                    self.available_cores[1..1 + cores_per_type * 2].to_vec()
-                );
-                let network_cores = CpuSet::new(
-                    self.available_cores[1 + cores_per_type * 2..].to_vec()
-                );
+                let inference_cores =
+                    CpuSet::new(self.available_cores[1..1 + cores_per_type * 2].to_vec());
+                let network_cores =
+                    CpuSet::new(self.available_cores[1 + cores_per_type * 2..].to_vec());
                 let background_cores = CpuSet::new(vec![self.available_cores[0]]);
-                
+
                 self.thread_type_cores.insert(ThreadType::Io, io_cores);
-                self.thread_type_cores.insert(ThreadType::Inference, inference_cores);
-                self.thread_type_cores.insert(ThreadType::Network, network_cores);
-                self.thread_type_cores.insert(ThreadType::Background, background_cores);
+                self.thread_type_cores
+                    .insert(ThreadType::Inference, inference_cores);
+                self.thread_type_cores
+                    .insert(ThreadType::Network, network_cores);
+                self.thread_type_cores
+                    .insert(ThreadType::Background, background_cores);
             }
             _ => {
                 // Large systems - optimal separation
@@ -166,32 +174,29 @@ impl AffinityManager {
                 let io_cores = total_cores * 20 / 100; // 20% for I/O
                 let network_cores = total_cores * 15 / 100; // 15% for network
                 let _background_cores = total_cores * 5 / 100; // 5% for background
-                
+
                 let io_start = 0;
                 let inference_start = io_start + io_cores;
                 let network_start = inference_start + inference_cores;
                 let background_start = network_start + network_cores;
-                
-                let io_set = CpuSet::new(
-                    self.available_cores[io_start..inference_start].to_vec()
-                );
-                let inference_set = CpuSet::new(
-                    self.available_cores[inference_start..network_start].to_vec()
-                );
-                let network_set = CpuSet::new(
-                    self.available_cores[network_start..background_start].to_vec()
-                );
-                let background_set = CpuSet::new(
-                    self.available_cores[background_start..].to_vec()
-                );
-                
+
+                let io_set = CpuSet::new(self.available_cores[io_start..inference_start].to_vec());
+                let inference_set =
+                    CpuSet::new(self.available_cores[inference_start..network_start].to_vec());
+                let network_set =
+                    CpuSet::new(self.available_cores[network_start..background_start].to_vec());
+                let background_set = CpuSet::new(self.available_cores[background_start..].to_vec());
+
                 self.thread_type_cores.insert(ThreadType::Io, io_set);
-                self.thread_type_cores.insert(ThreadType::Inference, inference_set);
-                self.thread_type_cores.insert(ThreadType::Network, network_set);
-                self.thread_type_cores.insert(ThreadType::Background, background_set);
+                self.thread_type_cores
+                    .insert(ThreadType::Inference, inference_set);
+                self.thread_type_cores
+                    .insert(ThreadType::Network, network_set);
+                self.thread_type_cores
+                    .insert(ThreadType::Background, background_set);
             }
         }
-        
+
         // Log the assignment
         for (thread_type, cpu_set) in &self.thread_type_cores {
             info!(
@@ -202,14 +207,14 @@ impl AffinityManager {
             );
         }
     }
-    
+
     /// Set the CPU affinity for the current thread
     pub fn set_thread_affinity(&self, thread_type: ThreadType) -> Result<(), String> {
         if !self.affinity_supported {
             debug!("CPU affinity not supported, skipping affinity setting");
             return Ok(());
         }
-        
+
         if let Some(cpu_set) = self.thread_type_cores.get(&thread_type) {
             if let Some(core_id) = cpu_set.next_core() {
                 if core_affinity::set_for_current(core_id) {
@@ -222,13 +227,19 @@ impl AffinityManager {
                     Err(format!("Failed to set affinity to core {:?}", core_id))
                 }
             } else {
-                Err(format!("No cores available for thread type {:?}", thread_type))
+                Err(format!(
+                    "No cores available for thread type {:?}",
+                    thread_type
+                ))
             }
         } else {
-            Err(format!("No CPU set configured for thread type {:?}", thread_type))
+            Err(format!(
+                "No CPU set configured for thread type {:?}",
+                thread_type
+            ))
         }
     }
-    
+
     /// Spawn a thread with specific CPU affinity
     pub fn spawn_with_affinity<F, T>(
         &self,
@@ -241,25 +252,25 @@ impl AffinityManager {
         T: Send + 'static,
     {
         let affinity_manager = self.clone();
-        
+
         let mut builder = thread::Builder::new();
         if let Some(name) = name {
             builder = builder.name(name);
         }
-        
+
         builder
             .spawn(move || {
                 // Set affinity for this thread
                 if let Err(e) = affinity_manager.set_thread_affinity(thread_type) {
                     warn!("Failed to set thread affinity: {}", e);
                 }
-                
+
                 // Execute the user function
                 f()
             })
             .expect("Failed to spawn thread")
     }
-    
+
     /// Get the recommended number of threads for a specific thread type
     pub fn recommended_thread_count(&self, thread_type: ThreadType) -> usize {
         if let Some(cpu_set) = self.thread_type_cores.get(&thread_type) {
@@ -268,19 +279,20 @@ impl AffinityManager {
             1
         }
     }
-    
+
     /// Get information about the current CPU topology
     pub fn topology_info(&self) -> CpuTopologyInfo {
         CpuTopologyInfo {
             total_cores: self.available_cores.len(),
             affinity_supported: self.affinity_supported,
-            thread_assignments: self.thread_type_cores
+            thread_assignments: self
+                .thread_type_cores
                 .iter()
                 .map(|(k, v)| (*k, v.len()))
                 .collect(),
         }
     }
-    
+
     /// Check if CPU affinity is supported on this system
     pub fn is_affinity_supported(&self) -> bool {
         self.affinity_supported
@@ -291,7 +303,8 @@ impl Clone for AffinityManager {
     fn clone(&self) -> Self {
         Self {
             available_cores: self.available_cores.clone(),
-            thread_type_cores: self.thread_type_cores
+            thread_type_cores: self
+                .thread_type_cores
                 .iter()
                 .map(|(k, v)| (*k, CpuSet::new(v.cores().to_vec())))
                 .collect(),
@@ -329,43 +342,43 @@ mod tests {
     use super::*;
     use std::sync::Arc;
     use std::time::Duration;
-    
+
     #[test]
     fn test_affinity_manager_creation() {
         let manager = AffinityManager::new();
         let topology = manager.topology_info();
-        
+
         println!("CPU topology: {}", topology);
-        
+
         // Should have some thread type assignments
         assert!(!topology.thread_assignments.is_empty());
     }
-    
+
     #[test]
     fn test_cpu_set() {
         let cores = core_affinity::get_core_ids().unwrap_or_default();
         if cores.is_empty() {
             return; // Skip test if no cores available
         }
-        
+
         let cpu_set = CpuSet::new(cores.clone());
-        
+
         assert_eq!(cpu_set.len(), cores.len());
         assert!(!cpu_set.is_empty());
-        
+
         // Test round-robin assignment
         let first_core = cpu_set.next_core();
         let second_core = cpu_set.next_core();
-        
+
         assert!(first_core.is_some());
         assert!(second_core.is_some());
     }
-    
+
     #[test]
     fn test_thread_spawning_with_affinity() {
         let manager = Arc::new(AffinityManager::new());
         let manager_clone = Arc::clone(&manager);
-        
+
         let handle = manager.spawn_with_affinity(
             ThreadType::Background,
             Some("test-thread".to_string()),
@@ -375,22 +388,22 @@ mod tests {
                 42
             },
         );
-        
+
         let result = handle.join().unwrap();
         assert_eq!(result, 42);
     }
-    
+
     #[test]
     fn test_recommended_thread_counts() {
         let manager = AffinityManager::new();
-        
+
         let inference_threads = manager.recommended_thread_count(ThreadType::Inference);
         let io_threads = manager.recommended_thread_count(ThreadType::Io);
-        
+
         // Should recommend at least 1 thread for each type
         assert!(inference_threads >= 1);
         assert!(io_threads >= 1);
-        
+
         println!(
             "Recommended threads - Inference: {}, I/O: {}",
             inference_threads, io_threads

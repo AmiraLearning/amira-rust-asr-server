@@ -21,19 +21,19 @@ use tonic::Status as TonicStatus;
 pub enum AsrError {
     #[error("Audio processing failed: {0}")]
     AudioProcessing(#[from] AudioError),
-    
+
     #[error("Model inference failed: {0}")]
     ModelInference(#[from] ModelError),
-    
+
     #[error("Decoder state invalid: {0}")]
     DecoderState(String),
-    
+
     #[error("Configuration error: {0}")]
     Configuration(String),
-    
+
     #[error("Vocabulary error: {0}")]
     Vocabulary(String),
-    
+
     #[error("Pipeline error: {0}")]
     Pipeline(String),
 }
@@ -43,19 +43,19 @@ pub enum AsrError {
 pub enum AudioError {
     #[error("Invalid sample rate: expected {expected}, got {actual}")]
     InvalidSampleRate { expected: u32, actual: u32 },
-    
+
     #[error("Invalid audio format: {0}")]
     InvalidFormat(String),
-    
+
     #[error("Buffer underrun: insufficient audio data")]
     BufferUnderrun,
-    
+
     #[error("Buffer overflow: audio data too large")]
     BufferOverflow,
-    
+
     #[error("SIMD processing error: {0}")]
     SimdProcessing(String),
-    
+
     #[error("Windowing error: {0}")]
     Windowing(String),
 }
@@ -65,22 +65,28 @@ pub enum AudioError {
 pub enum ModelError {
     #[error("Model not found: {model_name}")]
     NotFound { model_name: String },
-    
+
     #[error("Invalid input shape: expected {expected:?}, got {actual:?}")]
-    InvalidInputShape { expected: Vec<usize>, actual: Vec<usize> },
-    
+    InvalidInputShape {
+        expected: Vec<usize>,
+        actual: Vec<usize>,
+    },
+
     #[error("Invalid output shape: expected {expected:?}, got {actual:?}")]
-    InvalidOutputShape { expected: Vec<usize>, actual: Vec<usize> },
-    
+    InvalidOutputShape {
+        expected: Vec<usize>,
+        actual: Vec<usize>,
+    },
+
     #[error("Tensor conversion error: {0}")]
     TensorConversion(String),
-    
+
     #[error("Preprocessing error: {0}")]
     Preprocessing(String),
-    
+
     #[error("Postprocessing error: {0}")]
     Postprocessing(String),
-    
+
     #[error("Model inference error: {0}")]
     Inference(String),
 }
@@ -90,19 +96,19 @@ pub enum ModelError {
 pub enum TritonError {
     #[error("Connection failed: {0}")]
     Connection(#[from] tonic::transport::Error),
-    
+
     #[error("Inference timeout: {0}")]
     Timeout(#[from] tokio::time::error::Elapsed),
-    
+
     #[error("Pool exhausted: {0}")]
     PoolExhausted(String),
-    
+
     #[error("gRPC error: {0}")]
     Grpc(#[from] TonicStatus),
-    
+
     #[error("Model server error: {0}")]
     ModelServer(String),
-    
+
     #[error("Invalid response: {0}")]
     InvalidResponse(String),
 }
@@ -112,19 +118,19 @@ pub enum TritonError {
 pub enum ConfigError {
     #[error("Missing required field: {field}")]
     MissingField { field: String },
-    
+
     #[error("Invalid value for {field}: {value}")]
     InvalidValue { field: String, value: String },
-    
+
     #[error("File not found: {path}")]
     FileNotFound { path: String },
-    
+
     #[error("Parse error: {0}")]
     Parse(String),
-    
+
     #[error("Validation error: {0}")]
     Validation(String),
-    
+
     #[error("Model configuration error: {0}")]
     ModelConfig(#[from] ModelError),
 }
@@ -134,19 +140,19 @@ pub enum ConfigError {
 pub enum ServerError {
     #[error("Bind error: {0}")]
     Bind(#[from] std::io::Error),
-    
+
     #[error("Request validation error: {0}")]
     RequestValidation(String),
-    
+
     #[error("WebSocket error: {0}")]
     WebSocket(String),
-    
+
     #[error("JSON serialization error: {0}")]
     JsonSerialization(#[from] serde_json::Error),
-    
+
     #[error("Service unavailable: {0}")]
     ServiceUnavailable(String),
-    
+
     #[error("Rate limit exceeded: {0}")]
     RateLimitExceeded(String),
 }
@@ -156,16 +162,16 @@ pub enum ServerError {
 pub enum PerformanceError {
     #[error("Memory allocation failed: {0}")]
     MemoryAllocation(String),
-    
+
     #[error("CPU affinity error: {0}")]
     CpuAffinity(String),
-    
+
     #[error("NUMA error: {0}")]
     Numa(String),
-    
+
     #[error("Circuit breaker open: {0}")]
     CircuitBreakerOpen(String),
-    
+
     #[error("Resource exhausted: {0}")]
     ResourceExhausted(String),
 }
@@ -176,13 +182,13 @@ pub enum PerformanceError {
 pub enum CudaError {
     #[error("CUDA initialization failed: {0}")]
     Initialization(String),
-    
+
     #[error("CUDA memory allocation failed: {0}")]
     MemoryAllocation(String),
-    
+
     #[error("CUDA kernel execution failed: {0}")]
     KernelExecution(String),
-    
+
     #[error("CUDA device error: {0}")]
     Device(String),
 }
@@ -192,47 +198,47 @@ pub enum CudaError {
 pub enum AppError {
     #[error("ASR error: {0}")]
     Asr(#[from] AsrError),
-    
+
     #[error("Triton error: {0}")]
     Triton(#[from] TritonError),
-    
+
     #[error("Configuration error: {0}")]
     Config(#[from] ConfigError),
-    
+
     #[error("Server error: {0}")]
     Server(#[from] ServerError),
-    
+
     #[error("Performance error: {0}")]
     Performance(#[from] PerformanceError),
-    
+
     #[cfg(feature = "cuda")]
     #[error("CUDA error: {0}")]
     Cuda(#[from] CudaError),
-    
+
     #[error("IO error: {0}")]
     Io(#[from] io::Error),
-    
+
     #[error("Network error: {0}")]
     Network(String),
-    
+
     #[error("Configuration error: {0}")]
     ConfigError(String),
-    
+
     #[error("Service unavailable: {0}")]
     ServiceUnavailable(String),
-    
+
     #[error("Timeout: {0}")]
     Timeout(String),
-    
+
     #[error("Capacity exceeded: {0}")]
     CapacityExceeded(String),
-    
+
     #[error("Triton inference error: {0}")]
     TritonInference(String),
-    
+
     #[error("Invalid input: {0}")]
     InvalidInput(String),
-    
+
     #[error("Internal error: {0}")]
     Internal(String),
 }

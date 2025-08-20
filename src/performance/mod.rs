@@ -8,7 +8,7 @@
 //! ## Key Optimization Areas
 //!
 //! ### CPU Affinity Management (`affinity.rs`)
-//! 
+//!
 //! Manages CPU core assignment to optimize performance by:
 //! - **Thread Affinity**: Binding specific thread types to dedicated CPU cores
 //! - **Cache Locality**: Keeping related threads on cores that share cache levels
@@ -84,5 +84,5 @@ pub mod numa_aware;
 pub mod specialized_pools;
 
 pub use affinity::{AffinityManager, CpuSet, ThreadType};
-pub use numa_aware::{NumaAwareAllocator, NumaNode, numa_allocate_vec};
+pub use numa_aware::{numa_allocate_vec, NumaAwareAllocator, NumaNode};
 pub use specialized_pools::{InferenceThreadPool, IoThreadPool, SpecializedExecutor};

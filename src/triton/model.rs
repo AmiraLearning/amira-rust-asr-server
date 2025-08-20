@@ -68,7 +68,11 @@ pub struct PreprocessorModel;
 
 impl PreprocessorModel {
     /// Zero-copy inference method that avoids allocations in the hot path
-    pub async fn infer_zero_copy(&self, client: &mut TritonClient, input: PreprocessorInputRef<'_>) -> Result<PreprocessorOutput> {
+    pub async fn infer_zero_copy(
+        &self,
+        client: &mut TritonClient,
+        input: PreprocessorInputRef<'_>,
+    ) -> Result<PreprocessorOutput> {
         let waveform_len = input.waveform.len() as i64;
 
         // Build inference request with borrowed data
@@ -107,7 +111,7 @@ impl PreprocessorModel {
         // Execute inference
         let response = client.infer(request).await?;
 
-        // Process response (same as regular method) 
+        // Process response (same as regular method)
         let expected_tensors = {
             let mut map = HashMap::new();
 
@@ -135,11 +139,15 @@ impl PreprocessorModel {
         let tensors = parse_raw_tensors(&response, &expected_tensors)?;
 
         let features_tensor = tensors.get("features").ok_or_else(|| {
-            AppError::Asr(AsrError::ModelInference(ModelError::Inference("Missing features tensor in preprocessor response".to_string())))
+            AppError::Asr(AsrError::ModelInference(ModelError::Inference(
+                "Missing features tensor in preprocessor response".to_string(),
+            )))
         })?;
 
         let features_length_tensor = tensors.get("features_lens").ok_or_else(|| {
-            AppError::Asr(AsrError::ModelInference(ModelError::Inference("Missing features_lens tensor in preprocessor response".to_string())))
+            AppError::Asr(AsrError::ModelInference(ModelError::Inference(
+                "Missing features_lens tensor in preprocessor response".to_string(),
+            )))
         })?;
 
         let features = features_tensor.as_f32()?;
@@ -229,11 +237,15 @@ impl TritonModel for PreprocessorModel {
 
         // Extract features and features_len
         let features_tensor = tensors.get("features").ok_or_else(|| {
-            AppError::Asr(AsrError::ModelInference(ModelError::Inference("Missing features tensor in preprocessor response".to_string())))
+            AppError::Asr(AsrError::ModelInference(ModelError::Inference(
+                "Missing features tensor in preprocessor response".to_string(),
+            )))
         })?;
 
         let features_lens_tensor = tensors.get("features_lens").ok_or_else(|| {
-            AppError::Asr(AsrError::ModelInference(ModelError::Inference("Missing features_lens tensor in preprocessor response".to_string())))
+            AppError::Asr(AsrError::ModelInference(ModelError::Inference(
+                "Missing features_lens tensor in preprocessor response".to_string(),
+            )))
         })?;
 
         let features = features_tensor.as_f32()?;
@@ -342,11 +354,15 @@ impl TritonModel for EncoderModel {
 
         // Extract outputs and encoded_lengths
         let outputs_tensor = tensors.get("outputs").ok_or_else(|| {
-            AppError::Asr(AsrError::ModelInference(ModelError::Inference("Missing outputs tensor in encoder response".to_string())))
+            AppError::Asr(AsrError::ModelInference(ModelError::Inference(
+                "Missing outputs tensor in encoder response".to_string(),
+            )))
         })?;
 
         let encoded_lengths_tensor = tensors.get("encoded_lengths").ok_or_else(|| {
-            AppError::Asr(AsrError::ModelInference(ModelError::Inference("Missing encoded_lengths tensor in encoder response".to_string())))
+            AppError::Asr(AsrError::ModelInference(ModelError::Inference(
+                "Missing encoded_lengths tensor in encoder response".to_string(),
+            )))
         })?;
 
         let outputs = outputs_tensor.as_f32()?;
@@ -406,7 +422,11 @@ pub struct DecoderJointModel;
 
 impl DecoderJointModel {
     /// Zero-copy inference method that avoids allocations in the hot path
-    pub async fn infer_zero_copy(&self, client: &mut TritonClient, input: DecoderJointInputRef<'_>) -> Result<DecoderJointOutput> {
+    pub async fn infer_zero_copy(
+        &self,
+        client: &mut TritonClient,
+        input: DecoderJointInputRef<'_>,
+    ) -> Result<DecoderJointOutput> {
         let target_length = input.targets.len() as i32;
 
         // Build inference request with borrowed data
@@ -520,15 +540,21 @@ impl DecoderJointModel {
         let tensors = parse_raw_tensors(&response, &expected_tensors)?;
 
         let logits_tensor = tensors.get("outputs").ok_or_else(|| {
-            AppError::Asr(AsrError::ModelInference(ModelError::Inference("Missing outputs tensor in decoder_joint response".to_string())))
+            AppError::Asr(AsrError::ModelInference(ModelError::Inference(
+                "Missing outputs tensor in decoder_joint response".to_string(),
+            )))
         })?;
 
         let states_1_tensor = tensors.get("output_states_1").ok_or_else(|| {
-            AppError::Asr(AsrError::ModelInference(ModelError::Inference("Missing output_states_1 tensor in decoder_joint response".to_string())))
+            AppError::Asr(AsrError::ModelInference(ModelError::Inference(
+                "Missing output_states_1 tensor in decoder_joint response".to_string(),
+            )))
         })?;
 
         let states_2_tensor = tensors.get("output_states_2").ok_or_else(|| {
-            AppError::Asr(AsrError::ModelInference(ModelError::Inference("Missing output_states_2 tensor in decoder_joint response".to_string())))
+            AppError::Asr(AsrError::ModelInference(ModelError::Inference(
+                "Missing output_states_2 tensor in decoder_joint response".to_string(),
+            )))
         })?;
 
         let logits = logits_tensor.as_f32()?;
@@ -667,15 +693,21 @@ impl TritonModel for DecoderJointModel {
 
         // Extract outputs and states
         let outputs_tensor = tensors.get("outputs").ok_or_else(|| {
-            AppError::Asr(AsrError::ModelInference(ModelError::Inference("Missing outputs tensor in decoder_joint response".to_string())))
+            AppError::Asr(AsrError::ModelInference(ModelError::Inference(
+                "Missing outputs tensor in decoder_joint response".to_string(),
+            )))
         })?;
 
         let output_states_1_tensor = tensors.get("output_states_1").ok_or_else(|| {
-            AppError::Asr(AsrError::ModelInference(ModelError::Inference("Missing output_states_1 tensor in decoder_joint response".to_string())))
+            AppError::Asr(AsrError::ModelInference(ModelError::Inference(
+                "Missing output_states_1 tensor in decoder_joint response".to_string(),
+            )))
         })?;
 
         let output_states_2_tensor = tensors.get("output_states_2").ok_or_else(|| {
-            AppError::Asr(AsrError::ModelInference(ModelError::Inference("Missing output_states_2 tensor in decoder_joint response".to_string())))
+            AppError::Asr(AsrError::ModelInference(ModelError::Inference(
+                "Missing output_states_2 tensor in decoder_joint response".to_string(),
+            )))
         })?;
 
         let logits = outputs_tensor.as_f32()?;

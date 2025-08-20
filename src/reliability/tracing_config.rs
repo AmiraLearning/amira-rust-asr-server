@@ -3,9 +3,9 @@
 //! Provides comprehensive tracing for debugging and performance monitoring
 //! across the entire ASR pipeline.
 
+use ::tracing::{info, warn};
 use opentelemetry::global;
 use opentelemetry_jaeger::new_agent_pipeline;
-use ::tracing::{info, warn};
 use tracing_opentelemetry::OpenTelemetryLayer;
 use tracing_subscriber::{
     filter::EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt, Registry,
