@@ -470,8 +470,8 @@ mod tests {
         let config = generate_cloud_config(&aws_info, &platform);
 
         // C5 instances should have specific optimizations
-        assert_eq!(config.disable_numa, false);
-        assert_eq!(config.disable_cpu_affinity, false);
+        assert!(!config.disable_numa);
+        assert!(!config.disable_cpu_affinity);
         assert_eq!(config.preferred_io_backend, Some("epoll".to_string()));
         assert_eq!(config.memory_strategy, MemoryStrategy::Standard);
     }
@@ -493,8 +493,8 @@ mod tests {
         let config = generate_cloud_config(&azure_info, &platform);
 
         // Azure should disable NUMA and CPU affinity due to Hyper-V
-        assert_eq!(config.disable_numa, true);
-        assert_eq!(config.disable_cpu_affinity, true);
+        assert!(config.disable_numa);
+        assert!(config.disable_cpu_affinity);
     }
 
     #[test]
@@ -514,8 +514,8 @@ mod tests {
         let config = generate_cloud_config(&aws_burstable, &platform);
 
         // Burstable instances should be very conservative
-        assert_eq!(config.disable_numa, true);
-        assert_eq!(config.disable_cpu_affinity, true);
+        assert!(config.disable_numa);
+        assert!(config.disable_cpu_affinity);
         assert_eq!(config.memory_strategy, MemoryStrategy::Conservative);
         assert_eq!(config.max_concurrent_streams, Some(4));
     }
