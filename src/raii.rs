@@ -317,9 +317,8 @@ where
 
 /// A scoped resource that ensures cleanup on scope exit.
 pub struct ScopedResource<T> {
-    resource: T,
-    #[allow(dead_code)]
-    cleanup: Box<dyn FnOnce() + Send>,
+    resource: Option<T>,
+    cleanup: Option<Box<dyn FnOnce() + Send>>,
 }
 
 impl<T> ScopedResource<T> {
@@ -329,24 +328,21 @@ impl<T> ScopedResource<T> {
         F: FnOnce() + Send + 'static,
     {
         Self {
-            resource,
-            cleanup: Box::new(cleanup),
+            resource: Some(resource),
+            cleanup: Some(Box::new(cleanup)),
         }
     }
     
     /// Take the resource and disable cleanup.
-    pub fn take(self) -> T {
-        // We need to extract the resource without calling Drop
-        let resource = unsafe { std::ptr::read(&self.resource) };
-        std::mem::forget(self); // Prevent Drop from running
-        resource
+    pub fn take(mut self) -> T {
+        self.cleanup.take();
+        self.resource.take().expect("Resource already taken")
     }
 }
 
 impl<T> Drop for ScopedResource<T> {
     fn drop(&mut self) {
-        // Note: We can't call the cleanup here because we've moved it.
-        // This is a limitation of the current design.
+        if let Some(c) = self.cleanup.take() { c(); }
     }
 }
 
@@ -354,13 +350,13 @@ impl<T> Deref for ScopedResource<T> {
     type Target = T;
     
     fn deref(&self) -> &Self::Target {
-        &self.resource
+        self.resource.as_ref().expect("Resource not available")
     }
 }
 
 impl<T> DerefMut for ScopedResource<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.resource
+        self.resource.as_mut().expect("Resource not available")
     }
 }
 

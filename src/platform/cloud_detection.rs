@@ -350,7 +350,7 @@ fn generate_generic_cloud_config(_cloud_info: &CloudInstanceInfo, _platform: &Pl
     CloudConfig {
         disable_numa: true, // Conservative approach for unknown cloud
         disable_cpu_affinity: true,
-        preferred_io_backend: Some("epoll".to_string()),
+        preferred_io_backend: None,
         max_concurrent_streams: Some(4),
         memory_strategy: MemoryStrategy::Conservative,
         network_strategy: NetworkStrategy::Conservative,

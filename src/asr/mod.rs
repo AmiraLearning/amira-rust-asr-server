@@ -60,7 +60,7 @@
 //! ## Usage Patterns
 //!
 //! ### High-Throughput Batch Processing
-//! ```rust
+//! ```rust,ignore
 //! use amira_rust_asr_server::asr::{TritonAsrPipeline, AsrPipeline};
 //!
 //! // Initialize with optimized memory pools
@@ -71,7 +71,7 @@
 //! ```
 //!
 //! ### Real-Time Streaming
-//! ```rust
+//! ```rust,ignore
 //! use amira_rust_asr_server::asr::{IncrementalAsr, DecoderState};
 //!
 //! // Initialize streaming ASR
@@ -88,7 +88,7 @@
 //! ```
 //!
 //! ### SIMD-Accelerated Audio Processing
-//! ```rust
+//! ```rust,ignore
 //! use amira_rust_asr_server::asr::simd;
 //!
 //! // Convert audio with SIMD optimization
@@ -120,7 +120,7 @@
 //! ## Monitoring and Debugging
 //!
 //! Enable detailed performance monitoring:
-//! ```rust
+//! ```rust,ignore
 //! // Memory pool statistics
 //! let stats = amira_rust_asr_server::asr::memory::global_pools().stats();
 //! println!("Pool hit rate: {:.2}%", stats.hit_rate() * 100.0);

@@ -153,7 +153,9 @@ fn apply_platform_optimizations(
     if config.force_io_backend.is_none() {
         let recommended_backend = match platform.virtualization {
             VirtualizationEnvironment::AWS | VirtualizationEnvironment::GCP => {
-                if *capabilities.feature_flags.get("prefer_epoll_over_io_uring").unwrap_or(&false) {
+                if *capabilities.feature_flags.get("prefer_epoll_over_io_uring").unwrap_or(&false)
+                    && *capabilities.feature_flags.get("epoll").unwrap_or(&false)
+                {
                     Some("epoll".to_string())
                 } else {
                     None
@@ -418,6 +420,8 @@ mod tests {
             vocabulary_path: std::path::PathBuf::from("test_vocab.txt"),
             server_host: "127.0.0.1".to_string(),
             server_port: 8057,
+            inference_backend: "grpc".to_string(),
+            cuda_device_id: 0,
             inference_timeout: std::time::Duration::from_secs(5),
             max_concurrent_streams: 10,
             max_concurrent_batches: 50,
@@ -442,6 +446,9 @@ mod tests {
         let result = initialize_platform(config).await;
         
         // Basic validation - initialization should succeed
+        if let Err(e) = &result {
+            println!("Platform initialization error: {}", e);
+        }
         assert!(result.is_ok(), "Platform initialization should succeed");
         
         if let Ok(platform_init) = result {

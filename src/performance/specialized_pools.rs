@@ -158,6 +158,7 @@ impl SpecializedExecutor {
     pub fn shutdown(self) {
         debug!("Shutting down specialized executor");
         
+        // Always use non-blocking shutdown to avoid dropping runtime in async context
         self.io_runtime.shutdown_background();
         self.inference_runtime.shutdown_background();
         self.network_runtime.shutdown_background();
@@ -388,6 +389,9 @@ mod tests {
         
         let stats = executor.stats();
         println!("Executor stats: {}", stats);
+
+        // Explicitly shutdown the executor before exiting async context
+        executor.shutdown();
     }
     
     #[tokio::test]

@@ -1,6 +1,6 @@
 use std::ffi::CString;
 use std::mem::{self, align_of, size_of, transmute, ManuallyDrop};
-use std::ops::{Deref, DerefMut};
+use std::marker::PhantomData;
 use std::os::raw::{c_char, c_int, c_void};
 use std::ptr;
 
@@ -21,15 +21,16 @@ pub struct DeviceBuffer<T> {
 /// A view into a device buffer, analogous to `&[T]` for host memory.
 #[derive(Debug)]
 #[repr(C)]
-pub struct DeviceSlice<T> {
+pub struct DeviceSlice<'a, T> {
     ptr: *mut T,
     len: usize,
+    _lt: PhantomData<&'a mut T>,
 }
 
-unsafe impl<T: Send> Send for DeviceBuffer<T> {}
-unsafe impl<T: Sync> Sync for DeviceBuffer<T> {}
-unsafe impl<T: Send> Send for DeviceSlice<T> {}
-unsafe impl<T: Sync> Sync for DeviceSlice<T> {}
+unsafe impl<T: DevicePod + Send> Send for DeviceBuffer<T> {}
+unsafe impl<T: DevicePod + Sync> Sync for DeviceBuffer<T> {}
+unsafe impl<'a, T: Send> Send for DeviceSlice<'a, T> {}
+unsafe impl<'a, T: Sync> Sync for DeviceSlice<'a, T> {}
 
 // Foreign function interface for CUDA operations
 extern "C" {
@@ -363,13 +364,13 @@ impl<T: 'static> DeviceBuffer<T> {
     }
 
     /// Returns a slice view of the buffer.
-    pub fn as_slice(&self) -> &DeviceSlice<T> {
-        unsafe { DeviceSlice::from_raw_parts(self.ptr, self.len) }
+    pub fn as_slice(&self) -> DeviceSlice<'_, T> {
+        unsafe { DeviceSlice::from_raw(self.ptr, self.len) }
     }
 
     /// Returns a mutable slice view of the buffer.
-    pub fn as_mut_slice(&mut self) -> &mut DeviceSlice<T> {
-        unsafe { DeviceSlice::from_raw_parts_mut(self.ptr, self.len) }
+    pub fn as_mut_slice(&mut self) -> DeviceSlice<'_, T> {
+        unsafe { DeviceSlice::from_raw(self.ptr, self.len) }
     }
 
     /// Explicitly destroy the buffer, returning any error from the operation.
@@ -392,7 +393,7 @@ impl<T: 'static> DeviceBuffer<T> {
     }
 }
 
-impl<T> DeviceSlice<T> {
+impl<'a, T> DeviceSlice<'a, T> {
     /// Create a device slice from raw parts.
     ///
     /// # Safety
@@ -401,17 +402,17 @@ impl<T> DeviceSlice<T> {
     /// - `ptr` points to valid device memory
     /// - `len` is the correct length
     /// - The memory is properly aligned for type `T`
-    pub unsafe fn from_raw_parts(ptr: *mut T, len: usize) -> &'static DeviceSlice<T> {
-        &*(ptr::slice_from_raw_parts(ptr, len) as *const DeviceSlice<T>)
+    pub unsafe fn from_raw(ptr: *mut T, len: usize) -> DeviceSlice<'a, T> {
+        DeviceSlice { ptr, len, _lt: PhantomData }
     }
 
     /// Create a mutable device slice from raw parts.
     ///
     /// # Safety
     ///
-    /// Same safety requirements as `from_raw_parts`.
-    pub unsafe fn from_raw_parts_mut(ptr: *mut T, len: usize) -> &'static mut DeviceSlice<T> {
-        &mut *(ptr::slice_from_raw_parts_mut(ptr, len) as *mut DeviceSlice<T>)
+    /// Same safety requirements as `from_raw`.
+    pub unsafe fn from_raw_mut(ptr: *mut T, len: usize) -> DeviceSlice<'a, T> {
+        DeviceSlice { ptr, len, _lt: PhantomData }
     }
 
     /// Returns the number of elements in the slice.
@@ -487,26 +488,15 @@ impl<T> DeviceSlice<T> {
     }
 }
 
-impl<T: 'static> Deref for DeviceBuffer<T> {
-    type Target = DeviceSlice<T>;
-
-    fn deref(&self) -> &Self::Target {
-        self.as_slice()
-    }
-}
-
-impl<T: 'static> DerefMut for DeviceBuffer<T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.as_mut_slice()
-    }
-}
+// Intentionally no Deref/DerefMut implementations for DeviceBuffer to avoid
+// fabricating references with incorrect lifetimes to device memory.
 
 impl<T> Drop for DeviceBuffer<T> {
     fn drop(&mut self) {
         if !self.ptr.is_null() {
             let result = unsafe { cuda_free_device(self.ptr as *mut c_void, self.device_id) };
             if result != CudaError::CudaSuccess {
-                eprintln!("Warning: Failed to free device memory: {:?}", result);
+                ::tracing::warn!("Failed to free device memory: {:?}", result);
             }
         }
     }

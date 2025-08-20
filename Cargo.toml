@@ -106,6 +106,9 @@ cuda = ["cc"]
 criterion = { version = "0.5", features = ["html_reports"] }
 tokio-test = "0.4"
 tempfile = "3.0"
+futures-util = "0.3"
+tokio-tungstenite = { version = "0.21", features = ["rustls-tls-native-roots"] }
+reqwest = { version = "0.11", features = ["json"] }
 
 [[bench]]
 name = "phase1_benchmarks"

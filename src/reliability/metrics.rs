@@ -12,6 +12,7 @@ use axum::{
 };
 use metrics::{counter, describe_counter, describe_gauge, describe_histogram, gauge, histogram};
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
+use once_cell::sync::OnceCell;
 use std::sync::Arc;
 use std::time::Instant;
 use ::tracing::{debug, info};
@@ -19,14 +20,17 @@ use ::tracing::{debug, info};
 /// Metrics recorder for the ASR server.
 pub struct AsrMetrics {
     /// Prometheus handle for exporting metrics.
-    prometheus_handle: PrometheusHandle,
+    prometheus_handle: Option<PrometheusHandle>,
 }
 
 impl AsrMetrics {
     /// Initialize metrics collection and return a metrics instance.
     pub fn new() -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let builder = PrometheusBuilder::new();
-        let prometheus_handle = builder.install_recorder()?;
+        static METRICS_HANDLE: OnceCell<PrometheusHandle> = OnceCell::new();
+        let prometheus_handle = METRICS_HANDLE.get_or_try_init(|| {
+            let builder = PrometheusBuilder::new();
+            builder.install_recorder()
+        }).ok().cloned();
 
         // Register all metrics with descriptions
         Self::register_metrics();
@@ -157,26 +161,13 @@ impl AsrMetrics {
 
     /// Get the Prometheus metrics as a string.
     pub fn render(&self) -> String {
-        self.prometheus_handle.render()
+        self.prometheus_handle.as_ref().map(|h| h.render()).unwrap_or_default()
     }
 
     /// Create a disabled metrics instance that doesn't record metrics.
     /// Used as a fallback when metrics initialization fails.
     pub fn disabled() -> Self {
-        // For disabled metrics, we'll create a minimal builder without installation
-        // This approach avoids the type mismatch issue
-        let builder = PrometheusBuilder::new();
-        // Create a handle that will return empty metrics
-        let prometheus_handle = builder.install_recorder().unwrap_or_else(|_| {
-            // If we can't install a recorder, create one with a unique port
-            // This is a fallback that should work in most cases
-            PrometheusBuilder::new()
-                .with_http_listener(([127, 0, 0, 1], 0)) // Use port 0 for auto-assignment
-                .install_recorder()
-                .expect("Failed to create fallback metrics recorder")
-        });
-
-        Self { prometheus_handle }
+        Self { prometheus_handle: None }
     }
 
     /// Create an Axum router for the metrics endpoint.

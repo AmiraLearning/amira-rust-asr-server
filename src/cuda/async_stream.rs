@@ -194,7 +194,7 @@ impl Drop for AsyncCudaStream {
         if !self.stream.is_null() {
             let result = unsafe { cuda_stream_destroy(self.stream) };
             if result != CudaError::CudaSuccess {
-                eprintln!("Warning: Failed to destroy CUDA stream: {:?}", result);
+                ::tracing::warn!("Failed to destroy CUDA stream: {:?}", result);
             }
         }
     }
@@ -313,27 +313,28 @@ impl Future for StreamWaiter {
             let waker = cx.waker().clone();
             
             tokio::spawn(async move {
-                // Poll in a loop until complete
+                use tokio::time::{sleep, Duration};
                 loop {
                     if matches!(stream.query_stream(), CudaError::CudaSuccess) {
                         let _ = tx.send(Ok(()));
                         waker.wake();
                         break;
                     }
-                    
-                    // Yield to allow other tasks to run
-                    tokio::task::yield_now().await;
+                    sleep(Duration::from_micros(50)).await;
                 }
             });
             
             self.receiver = Some(rx);
         }
         
-        // Poll the receiver
-        match self.receiver.as_mut().unwrap().poll_unpin(cx) {
-            Poll::Ready(Ok(result)) => Poll::Ready(result),
-            Poll::Ready(Err(_)) => Poll::Ready(Err(CudaSharedMemoryError::Unknown)),
-            Poll::Pending => Poll::Pending,
+        if let Some(rx) = self.receiver.as_mut() {
+            match rx.poll_unpin(cx) {
+                Poll::Ready(Ok(result)) => Poll::Ready(result),
+                Poll::Ready(Err(_)) => Poll::Ready(Err(CudaSharedMemoryError::Unknown)),
+                Poll::Pending => Poll::Pending,
+            }
+        } else {
+            Poll::Pending
         }
     }
 }
@@ -369,27 +370,28 @@ impl Future for EventWaiter {
             let waker = cx.waker().clone();
             
             tokio::spawn(async move {
-                // Poll in a loop until complete
+                use tokio::time::{sleep, Duration};
                 loop {
                     if matches!(event.query_event(), CudaError::CudaSuccess) {
                         let _ = tx.send(Ok(()));
                         waker.wake();
                         break;
                     }
-                    
-                    // Yield to allow other tasks to run
-                    tokio::task::yield_now().await;
+                    sleep(Duration::from_micros(50)).await;
                 }
             });
             
             self.receiver = Some(rx);
         }
         
-        // Poll the receiver
-        match self.receiver.as_mut().unwrap().poll_unpin(cx) {
-            Poll::Ready(Ok(result)) => Poll::Ready(result),
-            Poll::Ready(Err(_)) => Poll::Ready(Err(CudaSharedMemoryError::Unknown)),
-            Poll::Pending => Poll::Pending,
+        if let Some(rx) = self.receiver.as_mut() {
+            match rx.poll_unpin(cx) {
+                Poll::Ready(Ok(result)) => Poll::Ready(result),
+                Poll::Ready(Err(_)) => Poll::Ready(Err(CudaSharedMemoryError::Unknown)),
+                Poll::Pending => Poll::Pending,
+            }
+        } else {
+            Poll::Pending
         }
     }
 }

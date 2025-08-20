@@ -612,6 +612,7 @@ pub mod benchmark {
 #[cfg(test)]
 mod tests {
     // use crate::error::AudioError;
+    use crate::performance_opts::{audio, neural, matrix, hotpath, memory};
     
     #[test]
     fn test_audio_processing_optimizations() {

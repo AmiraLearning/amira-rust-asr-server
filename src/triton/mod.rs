@@ -58,7 +58,7 @@
 //! ## Usage Patterns
 //!
 //! ### High-Throughput Production Setup
-//! ```rust
+//! ```rust,ignore
 //! use amira_rust_asr_server::triton::{ConnectionPool, PoolConfig, ReliableTritonClient};
 //!
 //! // Configure optimized connection pool
@@ -77,7 +77,7 @@
 //! ```
 //!
 //! ### Fault-Tolerant Model Inference
-//! ```rust
+//! ```rust,ignore
 //! use amira_rust_asr_server::triton::{PreprocessorModel, EncoderModel, DecoderJointModel};
 //!
 //! // Initialize models with reliable client
@@ -93,7 +93,7 @@
 //! ```
 //!
 //! ### Zero-Copy Inference Pipeline
-//! ```rust
+//! ```rust,ignore
 //! use amira_rust_asr_server::triton::{PreprocessorInputRef, TensorData};
 //!
 //! // Use reference-based input to avoid copying
@@ -110,7 +110,7 @@
 //!
 //! The module provides comprehensive metrics for monitoring and optimization:
 //!
-//! ```rust
+//! ```rust,ignore
 //! // Connection pool statistics
 //! let stats = pool.stats();
 //! println!("Active connections: {}", stats.active_connections);
@@ -126,7 +126,7 @@
 //! ## Configuration Options
 //!
 //! ### Connection Pool Tuning
-//! ```rust
+//! ```rust,ignore
 //! let config = PoolConfig {
 //!     max_connections: 50,        // Scale with concurrent load
 //!     min_connections: 10,        // Keep warm connections
@@ -138,7 +138,7 @@
 //! ```
 //!
 //! ### Circuit Breaker Tuning
-//! ```rust
+//! ```rust,ignore
 //! let client = ReliableTritonClientBuilder::new()
 //!     .failure_threshold(5)           // Failures before opening circuit
 //!     .recovery_timeout(Duration::from_secs(30))

@@ -71,15 +71,7 @@ impl AffinityManager {
     fn initialize(&mut self) {
         info!("Initializing CPU affinity management...");
         
-        // Check platform support first
-        if !self.platform_supports_affinity() {
-            self.strategy = AffinityStrategy::DisabledPlatform;
-            self.disabled.store(true, Ordering::Relaxed);
-            info!("CPU affinity disabled: platform does not support fine-grained affinity");
-            return;
-        }
-        
-        // Check if we're in a cloud environment that should disable affinity
+        // Check if we're in a cloud environment that should disable affinity first
         if let Some(cloud_info) = &self.cloud_info {
             if self.should_disable_affinity_for_cloud(cloud_info) {
                 self.strategy = AffinityStrategy::DisabledCloud;
@@ -87,6 +79,14 @@ impl AffinityManager {
                 info!("CPU affinity disabled for cloud environment: {:?}", cloud_info.provider);
                 return;
             }
+        }
+        
+        // Then check platform support
+        if !self.platform_supports_affinity() {
+            self.strategy = AffinityStrategy::DisabledPlatform;
+            self.disabled.store(true, Ordering::Relaxed);
+            info!("CPU affinity disabled: platform does not support fine-grained affinity");
+            return;
         }
         
         // Try to get available cores

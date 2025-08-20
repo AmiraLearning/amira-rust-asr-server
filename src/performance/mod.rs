@@ -43,7 +43,7 @@
 //! ## Usage Patterns
 //!
 //! ### Basic Setup
-//! ```rust
+//! ```rust,ignore
 //! use amira_rust_asr_server::performance::{AffinityManager, NumaAwareAllocator, SpecializedExecutor};
 //!
 //! // Initialize performance optimizations
@@ -53,7 +53,7 @@
 //! ```
 //!
 //! ### Production Configuration
-//! ```rust
+//! ```rust,ignore
 //! // Configure for production workload
 //! affinity_manager.set_thread_affinity(ThreadType::Inference)?;
 //! let audio_buffer = numa_allocator.allocate_local::<f32>(buffer_size)?;

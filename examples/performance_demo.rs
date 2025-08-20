@@ -4,9 +4,9 @@
 //! in the AMIRA Rust ASR Server, including lock-free memory pools, CPU affinity
 //! management, SIMD operations, and specialized thread pools.
 
-use amira_rust_asr_server::asr::{
-    global_lockfree_pools, softmax_optimized, batch_normalize_optimized,
-    dot_product_optimized,
+use amira_rust_asr_server::asr::memory::global_pools as global_lockfree_pools;
+use amira_rust_asr_server::asr::simd::{
+    softmax_optimized, batch_normalize_optimized, dot_product_optimized,
 };
 use amira_rust_asr_server::performance::{
     AffinityManager, ThreadType, SpecializedExecutor, numa_allocate_vec,
