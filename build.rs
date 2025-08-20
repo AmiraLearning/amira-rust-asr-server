@@ -1,3 +1,5 @@
+#![allow(clippy::unnecessary_map_or, clippy::collapsible_else_if)]
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Compile Triton Inference Server proto files
     tonic_build::configure()
@@ -18,9 +20,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let triton_lib_path = project_root.join("lib");
         let triton_include_path = project_root.join("include");
 
-        let require_triton = std::env::var("AMIRA_REQUIRE_TRITON")
-            .ok()
-            .map_or(false, |v| v == "1");
+        let require_triton = std::env::var("AMIRA_REQUIRE_TRITON").ok().is_some_and(|v| v == "1");
         if !triton_lib_path.exists() || !triton_include_path.exists() {
             if require_triton {
                 panic!(
@@ -104,12 +104,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("cargo:rustc-link-lib=cudart");
             println!("cargo:rustc-link-lib=cuda");
             println!("cargo:rustc-link-lib=stdc++");
+        } else if require_triton {
+            panic!("NVCC not found but AMIRA_REQUIRE_TRITON=1 set");
         } else {
-            if require_triton {
-                panic!("NVCC not found but AMIRA_REQUIRE_TRITON=1 set");
-            } else {
-                println!("cargo:warning=NVCC not found, skipping CUDA compilation");
-            }
+            println!("cargo:warning=NVCC not found, skipping CUDA compilation");
         }
     }
 
