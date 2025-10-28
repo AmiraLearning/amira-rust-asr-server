@@ -96,32 +96,37 @@ impl FastConnection {
     /// Update last used time atomically
     fn touch(&self) {
         let now_nanos = elapsed_nanos();
-        self.last_used_nanos.store(now_nanos, Ordering::Relaxed);
+        // Use Release ordering to ensure timestamp updates are visible to health checks
+        self.last_used_nanos.store(now_nanos, Ordering::Release);
         self.use_count.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Check if connection is healthy using atomic loads (lock-free)
     fn is_healthy_fast(&self, config: &OptimizedPoolConfig) -> bool {
         // Fast path: check cached health status first
-        if !self.is_healthy.load(Ordering::Relaxed) {
+        // Use Acquire to ensure we see all writes that happened before the flag was set
+        if !self.is_healthy.load(Ordering::Acquire) {
             return false;
         }
 
         let now_nanos = elapsed_nanos();
-        let created_nanos = self.created_at_nanos.load(Ordering::Relaxed);
-        let last_used_nanos = self.last_used_nanos.load(Ordering::Relaxed);
+        // Use Acquire for timestamps to ensure visibility of updates
+        let created_nanos = self.created_at_nanos.load(Ordering::Acquire);
+        let last_used_nanos = self.last_used_nanos.load(Ordering::Acquire);
 
         // Check age
         let age_nanos = now_nanos.saturating_sub(created_nanos);
         if age_nanos > config.max_connection_age.as_nanos() as u64 {
-            self.is_healthy.store(false, Ordering::Relaxed);
+            // Use Release to ensure writes are visible to other threads
+            self.is_healthy.store(false, Ordering::Release);
             return false;
         }
 
         // Check idle time
         let idle_nanos = now_nanos.saturating_sub(last_used_nanos);
         if idle_nanos > config.max_idle_time.as_nanos() as u64 {
-            self.is_healthy.store(false, Ordering::Relaxed);
+            // Use Release to ensure writes are visible to other threads
+            self.is_healthy.store(false, Ordering::Release);
             return false;
         }
 
@@ -256,11 +261,16 @@ impl OptimizedPooledConnection {
 
 impl Drop for OptimizedPooledConnection {
     fn drop(&mut self) {
+        // Decrement active count first to ensure accurate accounting even if return fails
+        self.pool.active_count.fetch_sub(1, Ordering::Relaxed);
+
         if self.should_return {
             // Update usage statistics atomically
             self.fast_conn.touch();
 
             // Return to pool (this is very fast - just pushes to vector)
+            // Using try_lock to avoid blocking; if it fails, the connection is dropped
+            // which is acceptable under high contention
             if let Ok(mut connections) = self.pool.connections.try_lock() {
                 connections.push(self.fast_conn.clone());
                 self.pool
@@ -268,10 +278,10 @@ impl Drop for OptimizedPooledConnection {
                     .current_pool_size
                     .fetch_add(1, Ordering::Relaxed);
             }
-            // If lock fails, connection is simply dropped (acceptable under high contention)
+            // If lock fails, connection is simply dropped without being returned to pool.
+            // This is safe - the Arc ensures the pool isn't freed, and active_count
+            // has already been decremented above.
         }
-
-        self.pool.active_count.fetch_sub(1, Ordering::Relaxed);
     }
 }
 

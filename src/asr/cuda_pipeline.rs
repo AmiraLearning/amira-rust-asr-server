@@ -7,7 +7,7 @@
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::asr::pipeline::AsrPipeline;
 use crate::asr::types::{DecoderState, Transcription, Vocabulary};
@@ -138,10 +138,7 @@ impl CudaAsrPipeline {
 
         region.ok_or_else(|| {
             let kind = if is_input { "input" } else { "output" };
-            cuda_error(
-                &format!("Missing ensemble {} region", kind),
-                name
-            )
+            cuda_error(&format!("Missing ensemble {} region", kind), name)
         })
     }
 
@@ -255,7 +252,12 @@ impl CudaAsrPipeline {
     }
 
     /// Initialize state vector with zeros
-    fn initialize_state(&self, region_name: &str, default_dim1: usize, default_dim2: usize) -> Vec<f32> {
+    fn initialize_state(
+        &self,
+        region_name: &str,
+        default_dim1: usize,
+        default_dim2: usize,
+    ) -> Vec<f32> {
         let state_size = self
             .ensemble_pool
             .config
@@ -293,7 +295,14 @@ impl CudaAsrPipeline {
         let mut samples = Vec::with_capacity(audio_bytes.len() / BYTES_PER_I16_SAMPLE);
         for chunk in audio_bytes.chunks_exact(BYTES_PER_I16_SAMPLE) {
             // chunks_exact guarantees chunk is exactly BYTES_PER_I16_SAMPLE bytes
-            let bytes: [u8; 2] = chunk.try_into().expect("chunk is exactly 2 bytes");
+            // Use defensive error handling instead of expect() to prevent panic-based DoS
+            let bytes: [u8; 2] = chunk.try_into().map_err(|_| {
+                AppError::Internal(format!(
+                    "Invalid audio chunk size: expected {} bytes, got {}",
+                    BYTES_PER_I16_SAMPLE,
+                    chunk.len()
+                ))
+            })?;
             let sample = i16::from_le_bytes(bytes);
             // Normalize to [-1.0, 1.0]
             samples.push(sample as f32 / AUDIO_NORMALIZATION_FACTOR);
@@ -318,24 +327,26 @@ impl CudaAsrPipeline {
     }
 
     /// Convert logits to tokens using greedy decoding
-    fn logits_to_tokens(&self, logits: &[f32]) -> Vec<i32> {
+    fn logits_to_tokens(&self, logits: &[f32]) -> Result<Vec<i32>> {
         let vocab_size = self.get_vocab_size();
 
         // Guard against division by zero
         if vocab_size == 0 {
-            warn!("Vocabulary size is 0, cannot decode tokens");
-            return Vec::new();
+            return Err(AppError::Internal(
+                "Vocabulary size is 0, cannot decode tokens".to_string(),
+            ));
         }
 
-        // Check if logits length is not evenly divisible by vocab_size
+        // STRICT: Reject logits that aren't evenly divisible by vocab_size
+        // This prevents silent data loss from truncation
         let remainder = logits.len() % vocab_size;
         if remainder != 0 {
-            warn!(
-                "Logits length {} not evenly divisible by vocab_size {}, {} elements will be ignored",
+            return Err(AppError::Internal(format!(
+                "Logits length {} not evenly divisible by vocab_size {} (remainder: {}). This indicates a model output mismatch.",
                 logits.len(),
                 vocab_size,
                 remainder
-            );
+            )));
         }
 
         let time_steps = logits.len() / vocab_size;
@@ -357,7 +368,7 @@ impl CudaAsrPipeline {
             tokens.push(max_idx as i32);
         }
 
-        tokens
+        Ok(tokens)
     }
 
     /// Convert tokens to text using vocabulary
@@ -370,17 +381,17 @@ impl CudaAsrPipeline {
     }
 
     /// Helper to build a Transcription from logits and audio samples
-    fn build_transcription(&self, logits: Vec<f32>, audio_samples: &[f32]) -> Transcription {
-        let tokens = self.logits_to_tokens(&logits);
+    fn build_transcription(&self, logits: Vec<f32>, audio_samples: &[f32]) -> Result<Transcription> {
+        let tokens = self.logits_to_tokens(&logits)?;
         let text = self.tokens_to_text(&tokens);
 
-        Transcription {
+        Ok(Transcription {
             text,
             tokens,
             audio_length_samples: audio_samples.len(),
             features_length: NOT_COMPUTED, // Not computed in ensemble mode
             encoded_length: NOT_COMPUTED,  // Not computed in ensemble mode
-        }
+        })
     }
 }
 
@@ -434,7 +445,7 @@ impl AsrPipeline for CudaAsrPipeline {
         state.states_2 = updated_decoder_state;
 
         // Build transcription from logits
-        let transcription = self.build_transcription(logits, audio_samples);
+        let transcription = self.build_transcription(logits, audio_samples)?;
         debug!("Stream processing completed: {}", transcription.text);
 
         Ok(transcription)
@@ -453,7 +464,7 @@ impl AsrPipeline for CudaAsrPipeline {
             .await?;
 
         // Build transcription from logits
-        let transcription = self.build_transcription(logits, audio_samples);
+        let transcription = self.build_transcription(logits, audio_samples)?;
         debug!("Batch processing completed: {}", transcription.text);
 
         Ok(transcription)

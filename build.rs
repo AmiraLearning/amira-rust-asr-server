@@ -81,14 +81,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "-std=c++17",
                 ])
                 .output()
-                .map_err(|e| format!("Failed to execute nvcc command: {}", e))?;
+                .map_err(|e| format!("Failed to execute nvcc command: {e}"))?;
 
-            if !cuda_obj.status.success() {
-                panic!(
-                    "CUDA compilation failed: {}",
-                    String::from_utf8_lossy(&cuda_obj.stderr)
-                );
-            }
+            assert!(
+                cuda_obj.status.success(),
+                "CUDA compilation failed: {}",
+                String::from_utf8_lossy(&cuda_obj.stderr)
+            );
 
             // Link the compiled CUDA object file
             println!("cargo:rustc-link-arg=cuda_helper.o");

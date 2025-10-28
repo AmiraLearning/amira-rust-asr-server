@@ -57,6 +57,9 @@ impl<T: 'static> DeviceBuffer<T> {
         capacity: usize,
         device_id: i32,
     ) -> Result<Self, CudaSharedMemoryError> {
+        // Validate device_id before attempting allocation
+        CudaSharedMemoryError::validate_device_id(device_id)?;
+
         if capacity == 0 {
             return Ok(DeviceBuffer {
                 ptr: ptr::null_mut(),
@@ -85,6 +88,9 @@ impl<T: 'static> DeviceBuffer<T> {
 
     /// Allocate device memory and fill it with zeroes.
     pub fn zeroed(capacity: usize, device_id: i32) -> Result<Self, CudaSharedMemoryError> {
+        // Validate device_id before attempting allocation
+        CudaSharedMemoryError::validate_device_id(device_id)?;
+
         if capacity == 0 {
             return Ok(DeviceBuffer {
                 ptr: ptr::null_mut(),
@@ -142,6 +148,32 @@ impl<T: 'static> DeviceBuffer<T> {
     /// - `ptr` must have been allocated via CUDA on the specified device
     /// - `capacity` must be the actual capacity allocated
     /// - The caller must ensure no other references to this memory exist
+    /// - **CRITICAL**: The memory must be fully initialized with valid data before calling this function.
+    ///   This function sets `len = capacity`, marking all memory as initialized and readable.
+    ///   Reading uninitialized memory leads to undefined behavior.
+    /// - The memory must be properly aligned for type `T` (CUDA allocations are typically 256-byte aligned)
+    /// - Type `T` must be safe to use with CUDA operations (typically POD types like f32, i32, etc.)
+    ///
+    /// # Usage
+    ///
+    /// This function is primarily intended for wrapping externally managed CUDA memory
+    /// (e.g., shared memory regions). If you need uninitialized memory, use `uninitialized()`
+    /// instead and then write data before reading.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // INCORRECT - creates buffer over uninitialized memory
+    /// let ptr = cuda_malloc_device(size, device_id);
+    /// let buffer = unsafe { DeviceBuffer::from_raw_parts(ptr, count, device_id) };
+    /// let data = buffer.copy_to_host(&mut output); // UB: reading uninitialized memory!
+    ///
+    /// // CORRECT - ensures memory is initialized first
+    /// let ptr = cuda_malloc_device(size, device_id);
+    /// cuda_memset_device(ptr, 0, size); // Initialize with zeros
+    /// let buffer = unsafe { DeviceBuffer::from_raw_parts(ptr, count, device_id) };
+    /// let data = buffer.copy_to_host(&mut output); // OK: memory is initialized
+    /// ```
     pub unsafe fn from_raw_parts(ptr: *mut T, capacity: usize, device_id: i32) -> Self {
         DeviceBuffer {
             ptr,

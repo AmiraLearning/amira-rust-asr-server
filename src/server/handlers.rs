@@ -212,7 +212,7 @@ pub async fn handle_batch(
 pub async fn health_check() -> impl IntoResponse {
     Json(serde_json::json!({
         "status": "healthy",
-        "service": "wav2vec2-rust-server",
+        "service": "amira-rust-asr-server",
         "version": "1.0.0"
     }))
 }

@@ -171,15 +171,15 @@ where
             if predicted_token == BLANK_TOKEN_ID {
                 debug!("Blank token predicted, moving to next time step");
                 break;
-            } else {
-                debug!("Non-blank token {}, continuing inner loop", predicted_token);
-                tokens.push(predicted_token);
-                total_symbols += 1;
+            }
 
-                if total_symbols >= MAX_TOTAL_TOKENS {
-                    warn!("Reached maximum total tokens during inner loop");
-                    break;
-                }
+            debug!("Non-blank token {}, continuing inner loop", predicted_token);
+            tokens.push(predicted_token);
+            total_symbols += 1;
+
+            if total_symbols >= MAX_TOTAL_TOKENS {
+                warn!("Reached maximum total tokens during inner loop");
+                break;
             }
         }
 
@@ -295,15 +295,15 @@ where
             if predicted_token == BLANK_TOKEN_ID {
                 debug!("Blank token predicted, moving to next time step");
                 break;
-            } else {
-                debug!("Non-blank token {}, continuing inner loop", predicted_token);
-                tokens.push(predicted_token);
-                total_symbols += 1;
+            }
 
-                if total_symbols >= MAX_TOTAL_TOKENS {
-                    warn!("Reached maximum total tokens during inner loop");
-                    break;
-                }
+            debug!("Non-blank token {}, continuing inner loop", predicted_token);
+            tokens.push(predicted_token);
+            total_symbols += 1;
+
+            if total_symbols >= MAX_TOTAL_TOKENS {
+                warn!("Reached maximum total tokens during inner loop");
+                break;
             }
         }
 

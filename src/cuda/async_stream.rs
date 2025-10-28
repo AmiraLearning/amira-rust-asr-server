@@ -107,7 +107,7 @@ impl AsyncCudaStream {
         dst: *mut T,
         src: &[T],
     ) -> Result<(), CudaSharedMemoryError> {
-        let size = src.len() * std::mem::size_of::<T>();
+        let size = std::mem::size_of_val(src);
         let result = unsafe {
             cuda_memcpy_h2d_async(
                 dst as *mut c_void,
@@ -140,7 +140,7 @@ impl AsyncCudaStream {
         dst: &mut [T],
         src: *const T,
     ) -> Result<(), CudaSharedMemoryError> {
-        let size = dst.len() * std::mem::size_of::<T>();
+        let size = std::mem::size_of_val(dst);
         let result = unsafe {
             cuda_memcpy_d2h_async(
                 dst.as_mut_ptr() as *mut c_void,

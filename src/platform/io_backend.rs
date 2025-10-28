@@ -176,17 +176,17 @@ fn select_optimal_backend(platform: &super::detection::PlatformInfo) -> IoBacken
                 if let Some(kernel) = &platform.kernel_version {
                     if kernel.has_stable_io_uring() {
                         return IoBackendType::IoUring;
-                    } else {
-                        warn!(
-                            "io_uring available but unstable on kernel {}.{}.{}, skipping",
-                            kernel.major, kernel.minor, kernel.patch
-                        );
                     }
+
+                    warn!(
+                        "io_uring available but unstable on kernel {}.{}.{}, skipping",
+                        kernel.major, kernel.minor, kernel.patch
+                    );
                 }
             }
             IoBackendType::Epoll => return IoBackendType::Epoll,
             IoBackendType::Kqueue => return IoBackendType::Kqueue,
-            _ => continue,
+            _ => {},
         }
     }
 

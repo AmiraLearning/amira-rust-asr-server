@@ -17,7 +17,7 @@ use amira_rust_asr_server::{
 };
 
 #[cfg(not(feature = "cuda"))]
-use amira_rust_asr_server::error::AppError;
+use amira_rust_asr_server::error::{AppError, ConfigError};
 
 #[cfg(feature = "cuda")]
 use amira_rust_asr_server::{
@@ -54,7 +54,7 @@ async fn main() -> Result<()> {
 
     // Create ASR pipeline based on backend configuration
     info!(
-        "DEBUG: inference_backend = '{}', is_cuda = {}",
+        "Using inference backend '{}' (is_cuda: {})",
         config.inference_backend,
         config.is_cuda_backend()
     );
@@ -86,13 +86,14 @@ async fn main() -> Result<()> {
                 }
             }
 
-            // Keep server alive by moving into Arc
-            let _triton_server = Arc::new(triton_server);
+            // Keep server alive for the lifetime of the application
+            // We intentionally leak this Arc to ensure the Triton server stays alive
+            // This is safer than risking early shutdown
+            let triton_server = Arc::new(triton_server);
+            std::mem::forget(triton_server);
 
-            Arc::new(CudaAsrPipeline::new(
-                0,
-                shared_vocabulary.clone(),
-            )?) as Arc<dyn amira_rust_asr_server::asr::AsrPipeline + Send + Sync>
+            Arc::new(CudaAsrPipeline::new(0, shared_vocabulary.clone())?)
+                as Arc<dyn amira_rust_asr_server::asr::AsrPipeline + Send + Sync>
         }
         #[cfg(not(feature = "cuda"))]
         {

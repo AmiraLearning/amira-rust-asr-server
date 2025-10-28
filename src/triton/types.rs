@@ -516,11 +516,7 @@ mod tests {
         // 4 * 256 elements * 4 bytes per f32 = 4096 bytes
         assert_eq!(def.byte_size(), 4096);
 
-        let def64 = TensorDef::new(
-            "test64",
-            TensorDataType::Float64,
-            TensorShape::vector(100),
-        );
+        let def64 = TensorDef::new("test64", TensorDataType::Float64, TensorShape::vector(100));
         // 100 elements * 8 bytes per f64 = 800 bytes
         assert_eq!(def64.byte_size(), 800);
     }
