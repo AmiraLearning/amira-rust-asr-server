@@ -51,11 +51,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("cargo:rustc-link-search=native=/usr/local/lib");
         println!("cargo:rustc-link-lib=tritonserver");
 
-        // Link additional Triton libraries
-        println!("cargo:rustc-link-lib=tritoncommonerror");
-        println!("cargo:rustc-link-lib=tritoncommonlogging");
-        println!("cargo:rustc-link-lib=tritoncommonmodelconfig");
-
         // Set up runtime library path
         println!(
             "cargo:rustc-link-arg=-Wl,-rpath,{}",
@@ -86,7 +81,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "-std=c++17",
                 ])
                 .output()
-                .expect("Failed to compile CUDA helper");
+                .map_err(|e| format!("Failed to execute nvcc command: {}", e))?;
 
             if !cuda_obj.status.success() {
                 panic!(

@@ -5,32 +5,71 @@
 //! zero-copy inference.
 
 use async_trait::async_trait;
+use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::asr::pipeline::AsrPipeline;
 use crate::asr::types::{DecoderState, Transcription, Vocabulary};
-use crate::cuda::{AsyncCudaStreamPool, CudaSharedMemoryPool, ModelConfig};
+use crate::cuda::{AsyncCudaStreamPool, CudaSharedMemoryPool, CudaSharedMemoryRegion, ModelConfig};
 use crate::error::{AppError, Result};
 
-/// CUDA-based ASR pipeline using direct Triton C API
-pub struct CudaAsrPipeline {
-    /// Device ID for CUDA operations
-    device_id: i32,
+// Type alias for region maps
+type RegionMap = HashMap<String, CudaSharedMemoryRegion>;
 
+// Region name constants for ensemble model
+const REGION_AUDIO_FRAMES: &str = "AUDIO_FRAMES";
+const REGION_ENCODER_STATE: &str = "ENCODER_STATE";
+const REGION_DECODER_STATE: &str = "DECODER_STATE";
+const REGION_LOGITS: &str = "LOGITS";
+const REGION_UPDATED_ENCODER_STATE: &str = "UPDATED_ENCODER_STATE";
+const REGION_UPDATED_DECODER_STATE: &str = "UPDATED_DECODER_STATE";
+
+// Stream pool index for ensemble operations
+const ENSEMBLE_STREAM_ID: usize = 0;
+
+// Audio normalization constant (16-bit PCM max value)
+const AUDIO_NORMALIZATION_FACTOR: f32 = 32768.0;
+
+// Default state dimensions
+const DEFAULT_ENCODER_STATE_DIM1: usize = 512;
+const DEFAULT_ENCODER_STATE_DIM2: usize = 2048;
+const DEFAULT_DECODER_STATE_DIM1: usize = 512;
+const DEFAULT_DECODER_STATE_DIM2: usize = 1024;
+
+// Default vocabulary size fallback
+const DEFAULT_VOCAB_SIZE: usize = 4096;
+
+// Size of f32 in bytes
+const F32_SIZE: usize = std::mem::size_of::<f32>();
+
+// Audio processing constants
+const BYTES_PER_I16_SAMPLE: usize = 2;
+
+// Stream and device configuration
+const ENSEMBLE_STREAM_COUNT: usize = 1;
+const DEFAULT_DEVICE_ID: i32 = 0;
+
+// Fallback and placeholder values
+const DEFAULT_TOKEN_FALLBACK: usize = 0;
+const NOT_COMPUTED: i64 = 0;
+
+// String labels for region registration
+const LABEL_ENSEMBLE_INPUT: &str = "ensemble input";
+const LABEL_ENSEMBLE_OUTPUT: &str = "ensemble output";
+
+/// Helper function to create CUDA errors with consistent formatting
+fn cuda_error(msg: &str, e: impl std::fmt::Display) -> AppError {
+    AppError::Cuda(crate::error::CudaError::Device(format!("{}: {}", msg, e)))
+}
+
+/// CUDA-based ASR pipeline using direct Triton C API with zero-copy ensemble inference
+pub struct CudaAsrPipeline {
     /// Vocabulary for token decoding
     vocabulary: Arc<Vocabulary>,
 
-    /// Memory pools for each model
-    preprocessor_pool: CudaSharedMemoryPool,
-    encoder_pool: CudaSharedMemoryPool,
-    decoder_joint_pool: CudaSharedMemoryPool,
-
-    /// Sample rate for audio processing
-    sample_rate: f32,
-
-    /// Window size for audio chunks
-    window_size: usize,
+    /// Memory pool for ensemble model (true 2-copy zero-copy inference)
+    ensemble_pool: CudaSharedMemoryPool,
 
     /// Async CUDA stream pool for overlapping operations
     stream_pool: AsyncCudaStreamPool,
@@ -38,578 +77,310 @@ pub struct CudaAsrPipeline {
 
 impl CudaAsrPipeline {
     /// Create a new CUDA-based ASR pipeline
-    pub fn new(
-        device_id: i32,
-        vocabulary: Arc<Vocabulary>,
-        sample_rate: f32,
-        window_size: usize,
-    ) -> Result<Self> {
-        info!("Initializing CUDA ASR pipeline on device {}", device_id);
+    pub fn new(device_id: i32, vocabulary: Arc<Vocabulary>) -> Result<Self> {
+        info!(
+            "Initializing CUDA ASR pipeline with zero-copy ensemble on device {}",
+            device_id
+        );
 
-        // Create model configurations
-        let preprocessor_config = ModelConfig::preprocessor();
-        let encoder_config = ModelConfig::encoder();
-        let decoder_joint_config = ModelConfig::decoder_joint();
+        // Create ensemble model configuration
+        let ensemble_config = ModelConfig::rnnt_ensemble();
 
-        // Create memory pools for each model
-        let preprocessor_pool = CudaSharedMemoryPool::new_for_model(preprocessor_config, device_id)
-            .map_err(|e| {
-                AppError::Cuda(crate::error::CudaError::Device(format!(
-                    "Failed to create preprocessor pool: {}",
-                    e
-                )))
-            })?;
+        // Create ensemble memory pool for zero-copy inference
+        let ensemble_pool = CudaSharedMemoryPool::new_for_model(ensemble_config, device_id)
+            .map_err(|e| cuda_error("Failed to create ensemble pool", e))?;
 
-        let encoder_pool =
-            CudaSharedMemoryPool::new_for_model(encoder_config, device_id).map_err(|e| {
-                AppError::Cuda(crate::error::CudaError::Device(format!(
-                    "Failed to create encoder pool: {}",
-                    e
-                )))
-            })?;
+        // Register ensemble regions with Triton server
+        Self::register_ensemble_with_triton(&ensemble_pool)?;
 
-        let decoder_joint_pool =
-            CudaSharedMemoryPool::new_for_model(decoder_joint_config, device_id).map_err(|e| {
-                AppError::Cuda(crate::error::CudaError::Device(format!(
-                    "Failed to create decoder joint pool: {}",
-                    e
-                )))
-            })?;
+        // Create async CUDA stream pool (only need 1 stream for ensemble)
+        let stream_pool = AsyncCudaStreamPool::new(device_id, ENSEMBLE_STREAM_COUNT)
+            .map_err(|e| cuda_error("Failed to create stream pool", e))?;
 
-        // Register all regions with Triton server
-        Self::register_pools_with_triton(&preprocessor_pool, &encoder_pool, &decoder_joint_pool)?;
-
-        // Create async CUDA stream pool for overlapping operations
-        let stream_pool = AsyncCudaStreamPool::new(device_id, 3) // 3 streams: preprocessor, encoder, decoder
-            .map_err(|e| {
-                AppError::Cuda(crate::error::CudaError::Device(format!(
-                    "Failed to create stream pool: {}",
-                    e
-                )))
-            })?;
-
-        info!("CUDA ASR pipeline initialized successfully");
+        info!("CUDA ASR pipeline with zero-copy ensemble initialized successfully");
 
         Ok(Self {
-            device_id,
             vocabulary,
-            preprocessor_pool,
-            encoder_pool,
-            decoder_joint_pool,
-            sample_rate,
-            window_size,
+            ensemble_pool,
             stream_pool,
         })
     }
 
-    /// Register all memory pools with Triton server
-    fn register_pools_with_triton(
-        preprocessor_pool: &CudaSharedMemoryPool,
-        encoder_pool: &CudaSharedMemoryPool,
-        decoder_joint_pool: &CudaSharedMemoryPool,
-    ) -> Result<()> {
-        debug!("Registering CUDA memory regions with Triton server");
-
-        // Register preprocessor regions
-        for (name, region) in &preprocessor_pool.input_regions {
-            region.register_with_triton_server().map_err(|e| {
-                AppError::Cuda(crate::error::CudaError::Device(format!(
-                    "Failed to register preprocessor input {}: {}",
-                    name, e
-                )))
-            })?;
+    /// Helper to register a set of regions with Triton server
+    fn register_regions(regions: &RegionMap, kind: &str) -> Result<()> {
+        for (name, region) in regions {
+            region
+                .register_with_triton_server()
+                .map_err(|e| cuda_error(&format!("Failed to register {} {}", kind, name), e))?;
         }
-        for (name, region) in &preprocessor_pool.output_regions {
-            region.register_with_triton_server().map_err(|e| {
-                AppError::Cuda(crate::error::CudaError::Device(format!(
-                    "Failed to register preprocessor output {}: {}",
-                    name, e
-                )))
-            })?;
-        }
-
-        // Register encoder regions
-        for (name, region) in &encoder_pool.input_regions {
-            region.register_with_triton_server().map_err(|e| {
-                AppError::Cuda(crate::error::CudaError::Device(format!(
-                    "Failed to register encoder input {}: {}",
-                    name, e
-                )))
-            })?;
-        }
-        for (name, region) in &encoder_pool.output_regions {
-            region.register_with_triton_server().map_err(|e| {
-                AppError::Cuda(crate::error::CudaError::Device(format!(
-                    "Failed to register encoder output {}: {}",
-                    name, e
-                )))
-            })?;
-        }
-
-        // Register decoder joint regions
-        for (name, region) in &decoder_joint_pool.input_regions {
-            region.register_with_triton_server().map_err(|e| {
-                AppError::Cuda(crate::error::CudaError::Device(format!(
-                    "Failed to register decoder joint input {}: {}",
-                    name, e
-                )))
-            })?;
-        }
-        for (name, region) in &decoder_joint_pool.output_regions {
-            region.register_with_triton_server().map_err(|e| {
-                AppError::Cuda(crate::error::CudaError::Device(format!(
-                    "Failed to register decoder joint output {}: {}",
-                    name, e
-                )))
-            })?;
-        }
-
-        info!("Successfully registered all CUDA memory regions with Triton server");
         Ok(())
+    }
+
+    /// Register ensemble memory pool with Triton server
+    fn register_ensemble_with_triton(ensemble_pool: &CudaSharedMemoryPool) -> Result<()> {
+        debug!("Registering ensemble CUDA memory regions with Triton server");
+
+        // Register ensemble input and output regions
+        Self::register_regions(&ensemble_pool.input_regions, LABEL_ENSEMBLE_INPUT)?;
+        Self::register_regions(&ensemble_pool.output_regions, LABEL_ENSEMBLE_OUTPUT)?;
+
+        info!("Successfully registered ensemble CUDA memory regions with Triton server");
+        Ok(())
+    }
+
+    /// Get a region (input or output) with consistent error handling
+    fn get_region(&self, name: &str, is_input: bool) -> Result<&CudaSharedMemoryRegion> {
+        let region = if is_input {
+            self.ensemble_pool.get_input_region(name)
+        } else {
+            self.ensemble_pool.get_output_region(name)
+        };
+
+        region.ok_or_else(|| {
+            let kind = if is_input { "input" } else { "output" };
+            cuda_error(
+                &format!("Missing ensemble {} region", kind),
+                name
+            )
+        })
+    }
+
+    /// Calculate buffer size for output in number of f32 elements
+    fn calculate_output_elements(&self, name: &str) -> Result<usize> {
+        let byte_size = self
+            .ensemble_pool
+            .config
+            .calculate_output_buffer_size(name)
+            .ok_or_else(|| cuda_error("Failed to calculate buffer size", name))?;
+        Ok(byte_size / F32_SIZE)
+    }
+
+    /// Run inference using the Triton ensemble model
+    ///
+    /// The ensemble model chains preprocessor → encoder → decoder_joint entirely on GPU.
+    /// All complexity is handled by the Triton graph configuration.
+    ///
+    /// **Memory copies: Only 2!**
+    /// 1. CPU → GPU: Audio + states upload
+    /// 2. GPU → CPU: Logits + updated states download
+    ///
+    /// All intermediate tensors (MEL_FEATURES, ENCODER_OUTPUT) stay on GPU!
+    async fn infer(
+        &self,
+        audio_samples: &[f32],
+        encoder_state: &[f32],
+        decoder_state: &[f32],
+    ) -> Result<(Vec<f32>, Vec<f32>, Vec<f32>)> {
+        debug!(
+            "Running ensemble inference with {} audio samples",
+            audio_samples.len()
+        );
+
+        // Get dedicated stream for ensemble operations
+        let stream = self
+            .stream_pool
+            .get_stream(ENSEMBLE_STREAM_ID)
+            .ok_or_else(|| cuda_error("Failed to get ensemble stream", "stream not available"))?;
+
+        // Get input regions
+        let audio_input_region = self.get_region(REGION_AUDIO_FRAMES, true)?;
+        let encoder_state_input_region = self.get_region(REGION_ENCODER_STATE, true)?;
+        let decoder_state_input_region = self.get_region(REGION_DECODER_STATE, true)?;
+
+        // Get output regions
+        let logits_output_region = self.get_region(REGION_LOGITS, false)?;
+        let updated_encoder_state_output_region =
+            self.get_region(REGION_UPDATED_ENCODER_STATE, false)?;
+        let updated_decoder_state_output_region =
+            self.get_region(REGION_UPDATED_DECODER_STATE, false)?;
+
+        // COPY #1: Upload all inputs to GPU (single H2D transfer)
+        audio_input_region
+            .enqueue_write_f32_data(audio_samples, &stream)
+            .map_err(|e| cuda_error("Failed to enqueue audio upload", e))?;
+
+        encoder_state_input_region
+            .enqueue_write_f32_data(encoder_state, &stream)
+            .map_err(|e| cuda_error("Failed to enqueue encoder state upload", e))?;
+
+        decoder_state_input_region
+            .enqueue_write_f32_data(decoder_state, &stream)
+            .map_err(|e| cuda_error("Failed to enqueue decoder state upload", e))?;
+
+        // Run ensemble inference (all on GPU - zero copy between stages!)
+        // This single call executes: preprocessor → encoder → decoder_joint
+        audio_input_region
+            .enqueue_inference_with_output_regions(
+                logits_output_region,
+                &self.ensemble_pool.config,
+                REGION_AUDIO_FRAMES,
+                REGION_LOGITS,
+                &stream,
+            )
+            .map_err(|e| cuda_error("Failed to enqueue ensemble inference", e))?;
+
+        // Calculate output buffer sizes (in f32 elements, not bytes)
+        let logits_elements = self.calculate_output_elements(REGION_LOGITS)?;
+        let encoder_state_elements =
+            self.calculate_output_elements(REGION_UPDATED_ENCODER_STATE)?;
+        let decoder_state_elements =
+            self.calculate_output_elements(REGION_UPDATED_DECODER_STATE)?;
+
+        // COPY #2: Download all outputs from GPU (single D2H transfer)
+        let mut logits = vec![0.0; logits_elements];
+        let mut updated_encoder_state = vec![0.0; encoder_state_elements];
+        let mut updated_decoder_state = vec![0.0; decoder_state_elements];
+
+        logits_output_region
+            .enqueue_read_f32_data(&mut logits, &stream)
+            .map_err(|e| cuda_error("Failed to enqueue logits download", e))?;
+
+        updated_encoder_state_output_region
+            .enqueue_read_f32_data(&mut updated_encoder_state, &stream)
+            .map_err(|e| cuda_error("Failed to enqueue encoder state download", e))?;
+
+        updated_decoder_state_output_region
+            .enqueue_read_f32_data(&mut updated_decoder_state, &stream)
+            .map_err(|e| cuda_error("Failed to enqueue decoder state download", e))?;
+
+        // Wait for all GPU operations to complete
+        stream
+            .wait()
+            .await
+            .map_err(|e| cuda_error("Failed to wait for ensemble completion", e))?;
+
+        debug!("Ensemble inference completed: {} logits", logits.len());
+
+        Ok((logits, updated_encoder_state, updated_decoder_state))
+    }
+
+    /// Initialize state vector with zeros
+    fn initialize_state(&self, region_name: &str, default_dim1: usize, default_dim2: usize) -> Vec<f32> {
+        let state_size = self
+            .ensemble_pool
+            .config
+            .calculate_buffer_size(region_name)
+            .unwrap_or(default_dim1 * default_dim2 * F32_SIZE);
+        vec![0.0; state_size / F32_SIZE]
+    }
+
+    /// Initialize encoder state with zeros
+    fn initialize_encoder_state(&self) -> Vec<f32> {
+        self.initialize_state(
+            REGION_ENCODER_STATE,
+            DEFAULT_ENCODER_STATE_DIM1,
+            DEFAULT_ENCODER_STATE_DIM2,
+        )
+    }
+
+    /// Initialize decoder state with zeros
+    fn initialize_decoder_state(&self) -> Vec<f32> {
+        self.initialize_state(
+            REGION_DECODER_STATE,
+            DEFAULT_DECODER_STATE_DIM1,
+            DEFAULT_DECODER_STATE_DIM2,
+        )
     }
 
     /// Convert audio bytes to normalized f32 samples
     fn audio_bytes_to_samples(&self, audio_bytes: &[u8]) -> Result<Vec<f32>> {
-        if audio_bytes.len() % 2 != 0 {
+        if !audio_bytes.len().is_multiple_of(BYTES_PER_I16_SAMPLE) {
             return Err(AppError::InvalidInput(
                 "Audio bytes must be even length (16-bit samples)".to_string(),
             ));
         }
 
-        let mut samples = Vec::with_capacity(audio_bytes.len() / 2);
-        for chunk in audio_bytes.chunks_exact(2) {
-            let sample = i16::from_le_bytes([chunk[0], chunk[1]]);
+        let mut samples = Vec::with_capacity(audio_bytes.len() / BYTES_PER_I16_SAMPLE);
+        for chunk in audio_bytes.chunks_exact(BYTES_PER_I16_SAMPLE) {
+            // chunks_exact guarantees chunk is exactly BYTES_PER_I16_SAMPLE bytes
+            let bytes: [u8; 2] = chunk.try_into().expect("chunk is exactly 2 bytes");
+            let sample = i16::from_le_bytes(bytes);
             // Normalize to [-1.0, 1.0]
-            samples.push(sample as f32 / 32768.0);
+            samples.push(sample as f32 / AUDIO_NORMALIZATION_FACTOR);
         }
 
         Ok(samples)
     }
 
-    /// Run preprocessing step with async CUDA streams
-    async fn run_preprocessor(&self, audio_samples: &[f32]) -> Result<Vec<f32>> {
-        debug!("Running preprocessor with {} samples", audio_samples.len());
-
-        // Get dedicated stream for preprocessor operations
-        let stream = self.stream_pool.get_stream(0).ok_or_else(|| {
-            AppError::Cuda(crate::error::CudaError::Device(
-                "Failed to get preprocessor stream".to_string(),
-            ))
-        })?;
-
-        // Get input and output regions
-        let input_region = self
-            .preprocessor_pool
-            .get_input_region("AUDIO_FRAMES")
-            .ok_or_else(|| {
-                AppError::Cuda(crate::error::CudaError::Device(
-                    "Missing preprocessor input region".to_string(),
-                ))
-            })?;
-
-        let output_region = self
-            .preprocessor_pool
-            .get_output_region("MEL_FEATURES")
-            .ok_or_else(|| {
-                AppError::Cuda(crate::error::CudaError::Device(
-                    "Missing preprocessor output region".to_string(),
-                ))
-            })?;
-
-        // Enqueue input data write to CUDA memory (non-blocking)
-        input_region
-            .enqueue_write_f32_data(audio_samples, &stream)
-            .map_err(|e| {
-                AppError::Cuda(crate::error::CudaError::Device(format!(
-                    "Failed to enqueue preprocessor input: {}",
-                    e
-                )))
-            })?;
-
-        // Enqueue inference (non-blocking, automatically ordered after write)
-        input_region
-            .enqueue_inference_with_output_regions(
-                output_region,
-                &self.preprocessor_pool.config,
-                "AUDIO_FRAMES",
-                "MEL_FEATURES",
-                &stream,
-            )
-            .map_err(|e| {
-                AppError::Cuda(crate::error::CudaError::Device(format!(
-                    "Failed to enqueue preprocessor inference: {}",
-                    e
-                )))
-            })?;
-
-        // Read output data
-        let output_size = self
-            .preprocessor_pool
+    /// Get vocabulary size from model config
+    fn get_vocab_size(&self) -> usize {
+        // Get vocab size from LOGITS output dimensions
+        // LOGITS shape is [time, vocab_size], so vocab_size is the last dimension
+        self.ensemble_pool
             .config
-            .calculate_output_buffer_size("MEL_FEATURES")
-            .ok_or_else(|| {
-                AppError::Cuda(crate::error::CudaError::Device(
-                    "Failed to calculate output buffer size".to_string(),
-                ))
-            })?;
-
-        // Enqueue output data read (non-blocking, automatically ordered after inference)
-        let output_elements = output_size / 4; // f32 is 4 bytes
-        let mut mel_features = vec![0.0f32; output_elements];
-        output_region
-            .enqueue_read_f32_data(&mut mel_features, &stream)
-            .map_err(|e| {
-                AppError::Cuda(crate::error::CudaError::Device(format!(
-                    "Failed to enqueue preprocessor output read: {}",
-                    e
-                )))
-            })?;
-
-        // Only wait when we need the results on the host
-        stream.wait().await.map_err(|e| {
-            AppError::Cuda(crate::error::CudaError::Device(format!(
-                "Failed to wait for preprocessor completion: {}",
-                e
-            )))
-        })?;
-
-        debug!(
-            "Preprocessor completed, output size: {}",
-            mel_features.len()
-        );
-        Ok(mel_features)
-    }
-
-    /// Run encoder step with async CUDA streams
-    async fn run_encoder(
-        &self,
-        mel_features: &[f32],
-        encoder_state: &mut Vec<f32>,
-    ) -> Result<(Vec<f32>, Vec<f32>)> {
-        debug!("Running encoder with {} mel features", mel_features.len());
-
-        // Get dedicated stream for encoder operations
-        let stream = self.stream_pool.get_stream(1).ok_or_else(|| {
-            AppError::Cuda(crate::error::CudaError::Device(
-                "Failed to get encoder stream".to_string(),
-            ))
-        })?;
-
-        // Get input and output regions
-        let mel_input_region = self
-            .encoder_pool
-            .get_input_region("MEL_FEATURES")
-            .ok_or_else(|| {
-                AppError::Cuda(crate::error::CudaError::Device(
-                    "Missing encoder MEL_FEATURES input region".to_string(),
-                ))
-            })?;
-
-        let state_input_region = self
-            .encoder_pool
-            .get_input_region("ENCODER_STATE")
-            .ok_or_else(|| {
-                AppError::Cuda(crate::error::CudaError::Device(
-                    "Missing encoder ENCODER_STATE input region".to_string(),
-                ))
-            })?;
-
-        let output_region = self
-            .encoder_pool
-            .get_output_region("ENCODER_OUTPUT")
-            .ok_or_else(|| {
-                AppError::Cuda(crate::error::CudaError::Device(
-                    "Missing encoder ENCODER_OUTPUT output region".to_string(),
-                ))
-            })?;
-
-        let state_output_region = self
-            .encoder_pool
-            .get_output_region("UPDATED_ENCODER_STATE")
-            .ok_or_else(|| {
-                AppError::Cuda(crate::error::CudaError::Device(
-                    "Missing encoder UPDATED_ENCODER_STATE output region".to_string(),
-                ))
-            })?;
-
-        // Enqueue input data writes to CUDA memory (non-blocking, can overlap)
-        mel_input_region
-            .enqueue_write_f32_data(mel_features, &stream)
-            .map_err(|e| {
-                AppError::Cuda(crate::error::CudaError::Device(format!(
-                    "Failed to enqueue encoder mel features: {}",
-                    e
-                )))
-            })?;
-
-        state_input_region
-            .enqueue_write_f32_data(encoder_state, &stream)
-            .map_err(|e| {
-                AppError::Cuda(crate::error::CudaError::Device(format!(
-                    "Failed to enqueue encoder state: {}",
-                    e
-                )))
-            })?;
-
-        // Enqueue inference (non-blocking, automatically ordered after both writes)
-        mel_input_region
-            .enqueue_inference_with_output_regions(
-                output_region,
-                &self.encoder_pool.config,
-                "MEL_FEATURES",
-                "ENCODER_OUTPUT",
-                &stream,
-            )
-            .map_err(|e| {
-                AppError::Cuda(crate::error::CudaError::Device(format!(
-                    "Failed to enqueue encoder inference: {}",
-                    e
-                )))
-            })?;
-
-        // Read output data
-        let output_size = self
-            .encoder_pool
-            .config
-            .calculate_output_buffer_size("ENCODER_OUTPUT")
-            .ok_or_else(|| {
-                AppError::Cuda(crate::error::CudaError::Device(
-                    "Failed to calculate encoder output buffer size".to_string(),
-                ))
-            })?;
-
-        let state_size = self
-            .encoder_pool
-            .config
-            .calculate_output_buffer_size("UPDATED_ENCODER_STATE")
-            .ok_or_else(|| {
-                AppError::Cuda(crate::error::CudaError::Device(
-                    "Failed to calculate encoder state buffer size".to_string(),
-                ))
-            })?;
-
-        // Enqueue output data reads (non-blocking, automatically ordered after inference)
-        let mut encoder_output = vec![0.0f32; output_size / 4];
-        let mut updated_encoder_state = vec![0.0f32; state_size / 4];
-
-        output_region
-            .enqueue_read_f32_data(&mut encoder_output, &stream)
-            .map_err(|e| {
-                AppError::Cuda(crate::error::CudaError::Device(format!(
-                    "Failed to enqueue encoder output read: {}",
-                    e
-                )))
-            })?;
-
-        state_output_region
-            .enqueue_read_f32_data(&mut updated_encoder_state, &stream)
-            .map_err(|e| {
-                AppError::Cuda(crate::error::CudaError::Device(format!(
-                    "Failed to enqueue encoder state read: {}",
-                    e
-                )))
-            })?;
-
-        // Only wait when we need the results on the host
-        stream.wait().await.map_err(|e| {
-            AppError::Cuda(crate::error::CudaError::Device(format!(
-                "Failed to wait for encoder completion: {}",
-                e
-            )))
-        })?;
-
-        // Update the encoder state
-        *encoder_state = updated_encoder_state.clone();
-
-        debug!("Encoder completed, output size: {}", encoder_output.len());
-        Ok((encoder_output, updated_encoder_state))
-    }
-
-    /// Run decoder/joint step
-    async fn run_decoder_joint(
-        &self,
-        encoder_output: &[f32],
-        decoder_state: &mut Vec<f32>,
-    ) -> Result<(Vec<f32>, Vec<f32>)> {
-        debug!(
-            "Running decoder/joint with {} encoder outputs",
-            encoder_output.len()
-        );
-
-        // Get input and output regions
-        let encoder_input_region = self
-            .decoder_joint_pool
-            .get_input_region("ENCODER_OUTPUT")
-            .ok_or_else(|| {
-                AppError::Cuda(crate::error::CudaError::Device(
-                    "Missing decoder joint ENCODER_OUTPUT input region".to_string(),
-                ))
-            })?;
-
-        let state_input_region = self
-            .decoder_joint_pool
-            .get_input_region("DECODER_STATE")
-            .ok_or_else(|| {
-                AppError::Cuda(crate::error::CudaError::Device(
-                    "Missing decoder joint DECODER_STATE input region".to_string(),
-                ))
-            })?;
-
-        let logits_output_region = self
-            .decoder_joint_pool
-            .get_output_region("LOGITS")
-            .ok_or_else(|| {
-                AppError::Cuda(crate::error::CudaError::Device(
-                    "Missing decoder joint LOGITS output region".to_string(),
-                ))
-            })?;
-
-        let state_output_region = self
-            .decoder_joint_pool
-            .get_output_region("UPDATED_DECODER_STATE")
-            .ok_or_else(|| {
-                AppError::Cuda(crate::error::CudaError::Device(
-                    "Missing decoder joint UPDATED_DECODER_STATE output region".to_string(),
-                ))
-            })?;
-
-        // Write input data to CUDA memory
-        encoder_input_region
-            .write_f32_data(encoder_output)
-            .map_err(|e| {
-                AppError::Cuda(crate::error::CudaError::Device(format!(
-                    "Failed to write decoder joint encoder output: {}",
-                    e
-                )))
-            })?;
-
-        state_input_region
-            .write_f32_data(decoder_state)
-            .map_err(|e| {
-                AppError::Cuda(crate::error::CudaError::Device(format!(
-                    "Failed to write decoder joint state: {}",
-                    e
-                )))
-            })?;
-
-        // Run inference
-        encoder_input_region
-            .run_inference_with_output_regions(
-                logits_output_region,
-                &self.decoder_joint_pool.config,
-                "ENCODER_OUTPUT",
-                "LOGITS",
-            )
-            .map_err(|e| {
-                AppError::Cuda(crate::error::CudaError::Device(format!(
-                    "Decoder joint inference failed: {}",
-                    e
-                )))
-            })?;
-
-        // Read output data
-        let logits_size = self
-            .decoder_joint_pool
-            .config
-            .calculate_output_buffer_size("LOGITS")
-            .ok_or_else(|| {
-                AppError::Cuda(crate::error::CudaError::Device(
-                    "Failed to calculate logits buffer size".to_string(),
-                ))
-            })?;
-
-        let state_size = self
-            .decoder_joint_pool
-            .config
-            .calculate_output_buffer_size("UPDATED_DECODER_STATE")
-            .ok_or_else(|| {
-                AppError::Cuda(crate::error::CudaError::Device(
-                    "Failed to calculate decoder state buffer size".to_string(),
-                ))
-            })?;
-
-        let logits = logits_output_region
-            .read_f32_data(logits_size / 4)
-            .map_err(|e| {
-                AppError::Cuda(crate::error::CudaError::Device(format!(
-                    "Failed to read logits: {}",
-                    e
-                )))
-            })?;
-
-        let updated_decoder_state =
-            state_output_region
-                .read_f32_data(state_size / 4)
-                .map_err(|e| {
-                    AppError::Cuda(crate::error::CudaError::Device(format!(
-                        "Failed to read decoder state: {}",
-                        e
-                    )))
-                })?;
-
-        // Update the decoder state
-        *decoder_state = updated_decoder_state.clone();
-
-        debug!("Decoder joint completed, logits size: {}", logits.len());
-        Ok((logits, updated_decoder_state))
-    }
-
-    /// Initialize encoder state with zeros
-    fn initialize_encoder_state(&self) -> Vec<f32> {
-        let state_size = self
-            .encoder_pool
-            .config
-            .calculate_buffer_size("ENCODER_STATE")
-            .unwrap_or(512 * 2048 * 4); // Default size
-        vec![0.0; state_size / 4] // f32 is 4 bytes
-    }
-
-    /// Initialize decoder state with zeros
-    fn initialize_decoder_state(&self) -> Vec<f32> {
-        let state_size = self
-            .decoder_joint_pool
-            .config
-            .calculate_buffer_size("DECODER_STATE")
-            .unwrap_or(512 * 1024 * 4); // Default size
-        vec![0.0; state_size / 4] // f32 is 4 bytes
+            .outputs
+            .iter()
+            .find(|(name, _spec)| name.as_str() == REGION_LOGITS)
+            .and_then(|(_name, spec)| spec.dims.last())
+            .copied()
+            .map(|dim| dim as usize)
+            .unwrap_or(DEFAULT_VOCAB_SIZE)
     }
 
     /// Convert logits to tokens using greedy decoding
-    fn logits_to_tokens(&self, logits: &[f32]) -> Vec<u32> {
-        // Assuming logits are shaped as [batch=1, time, vocab_size]
-        // For now, simple greedy decoding - take argmax of each time step
-        let vocab_size = 4096; // From model config
+    fn logits_to_tokens(&self, logits: &[f32]) -> Vec<i32> {
+        let vocab_size = self.get_vocab_size();
+
+        // Guard against division by zero
+        if vocab_size == 0 {
+            warn!("Vocabulary size is 0, cannot decode tokens");
+            return Vec::new();
+        }
+
+        // Check if logits length is not evenly divisible by vocab_size
+        let remainder = logits.len() % vocab_size;
+        if remainder != 0 {
+            warn!(
+                "Logits length {} not evenly divisible by vocab_size {}, {} elements will be ignored",
+                logits.len(),
+                vocab_size,
+                remainder
+            );
+        }
+
         let time_steps = logits.len() / vocab_size;
 
-        let mut tokens = Vec::new();
+        let mut tokens = Vec::with_capacity(time_steps);
         for t in 0..time_steps {
             let start_idx = t * vocab_size;
             let end_idx = start_idx + vocab_size;
             let time_logits = &logits[start_idx..end_idx];
 
             // Find the token with highest probability
-            let mut max_idx = 0;
-            let mut max_val = time_logits[0];
-            for (i, &val) in time_logits.iter().enumerate() {
-                if val > max_val {
-                    max_val = val;
-                    max_idx = i;
-                }
-            }
+            let max_idx = time_logits
+                .iter()
+                .enumerate()
+                .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+                .map(|(idx, _)| idx)
+                .unwrap_or(DEFAULT_TOKEN_FALLBACK);
 
-            tokens.push(max_idx as u32);
+            tokens.push(max_idx as i32);
         }
 
         tokens
     }
 
     /// Convert tokens to text using vocabulary
-    fn tokens_to_text(&self, tokens: &[u32]) -> String {
+    fn tokens_to_text(&self, tokens: &[i32]) -> String {
         tokens
             .iter()
-            .filter_map(|&token| self.vocabulary.get_token(token as i32))
+            .filter_map(|&token| self.vocabulary.get_token(token))
             .collect::<Vec<_>>()
             .join(" ")
+    }
+
+    /// Helper to build a Transcription from logits and audio samples
+    fn build_transcription(&self, logits: Vec<f32>, audio_samples: &[f32]) -> Transcription {
+        let tokens = self.logits_to_tokens(&logits);
+        let text = self.tokens_to_text(&tokens);
+
+        Transcription {
+            text,
+            tokens,
+            audio_length_samples: audio_samples.len(),
+            features_length: NOT_COMPUTED, // Not computed in ensemble mode
+            encoded_length: NOT_COMPUTED,  // Not computed in ensemble mode
+        }
     }
 }
 
@@ -644,73 +415,48 @@ impl AsrPipeline for CudaAsrPipeline {
     ) -> Result<Transcription> {
         debug!("Processing stream samples: {} samples", audio_samples.len());
 
-        // Get or initialize encoder/decoder states
-        let mut encoder_state = if state.states_1.is_empty() {
-            self.initialize_encoder_state()
+        // Run zero-copy ensemble inference (2 memory copies total!)
+        // No cloning! Pass existing state as slices or initialize new ones
+        let (logits, updated_encoder_state, updated_decoder_state) = if state.states_1.is_empty() {
+            // First call - initialize states
+            let encoder_state = self.initialize_encoder_state();
+            let decoder_state = self.initialize_decoder_state();
+            self.infer(audio_samples, &encoder_state, &decoder_state)
+                .await?
         } else {
-            state.states_1.clone()
+            // Subsequent calls - use existing states (no clone, just slices!)
+            self.infer(audio_samples, &state.states_1, &state.states_2)
+                .await?
         };
 
-        let mut decoder_state = if state.states_2.is_empty() {
-            self.initialize_decoder_state()
-        } else {
-            state.states_2.clone()
-        };
-
-        // Run the three-stage pipeline
-        let mel_features = self.run_preprocessor(audio_samples).await?;
-        let (encoder_output, updated_encoder_state) =
-            self.run_encoder(&mel_features, &mut encoder_state).await?;
-        let (logits, updated_decoder_state) = self
-            .run_decoder_joint(&encoder_output, &mut decoder_state)
-            .await?;
-
-        // Update state
+        // Update state for next chunk
         state.states_1 = updated_encoder_state;
         state.states_2 = updated_decoder_state;
 
-        // Convert logits to tokens and then to text
-        let tokens = self.logits_to_tokens(&logits);
-        let text = self.tokens_to_text(&tokens);
+        // Build transcription from logits
+        let transcription = self.build_transcription(logits, audio_samples);
+        debug!("Stream processing completed: {}", transcription.text);
 
-        debug!("Stream processing completed: {}", text);
-
-        Ok(Transcription {
-            text,
-            tokens: tokens.into_iter().map(|t| t as i32).collect(),
-            audio_length_samples: audio_samples.len(),
-            features_length: mel_features.len() as i64,
-            encoded_length: encoder_output.len() as i64,
-        })
+        Ok(transcription)
     }
 
     async fn process_batch_samples(&self, audio_samples: &[f32]) -> Result<Transcription> {
         debug!("Processing batch samples: {} samples", audio_samples.len());
 
         // Initialize fresh states for batch processing
-        let mut encoder_state = self.initialize_encoder_state();
-        let mut decoder_state = self.initialize_decoder_state();
+        let encoder_state = self.initialize_encoder_state();
+        let decoder_state = self.initialize_decoder_state();
 
-        // Run the three-stage pipeline
-        let mel_features = self.run_preprocessor(audio_samples).await?;
-        let (encoder_output, _) = self.run_encoder(&mel_features, &mut encoder_state).await?;
-        let (logits, _) = self
-            .run_decoder_joint(&encoder_output, &mut decoder_state)
+        // Run zero-copy ensemble inference (2 memory copies total!)
+        let (logits, ..) = self
+            .infer(audio_samples, &encoder_state, &decoder_state)
             .await?;
 
-        // Convert logits to tokens and then to text
-        let tokens = self.logits_to_tokens(&logits);
-        let text = self.tokens_to_text(&tokens);
+        // Build transcription from logits
+        let transcription = self.build_transcription(logits, audio_samples);
+        debug!("Batch processing completed: {}", transcription.text);
 
-        debug!("Batch processing completed: {}", text);
-
-        Ok(Transcription {
-            text,
-            tokens: tokens.into_iter().map(|t| t as i32).collect(),
-            audio_length_samples: audio_samples.len(),
-            features_length: mel_features.len() as i64,
-            encoded_length: encoder_output.len() as i64,
-        })
+        Ok(transcription)
     }
 }
 
@@ -718,8 +464,6 @@ impl AsrPipeline for CudaAsrPipeline {
 pub struct CudaAsrPipelineBuilder {
     device_id: Option<i32>,
     vocabulary: Option<Arc<Vocabulary>>,
-    sample_rate: Option<f32>,
-    window_size: Option<usize>,
 }
 
 impl CudaAsrPipelineBuilder {
@@ -728,8 +472,6 @@ impl CudaAsrPipelineBuilder {
         Self {
             device_id: None,
             vocabulary: None,
-            sample_rate: None,
-            window_size: None,
         }
     }
 
@@ -745,28 +487,14 @@ impl CudaAsrPipelineBuilder {
         self
     }
 
-    /// Set sample rate
-    pub fn sample_rate(mut self, sample_rate: f32) -> Self {
-        self.sample_rate = Some(sample_rate);
-        self
-    }
-
-    /// Set window size
-    pub fn window_size(mut self, window_size: usize) -> Self {
-        self.window_size = Some(window_size);
-        self
-    }
-
     /// Build the pipeline
     pub fn build(self) -> Result<CudaAsrPipeline> {
-        let device_id = self.device_id.unwrap_or(0);
+        let device_id = self.device_id.unwrap_or(DEFAULT_DEVICE_ID);
         let vocabulary = self
             .vocabulary
             .ok_or_else(|| AppError::ConfigError("Vocabulary is required".to_string()))?;
-        let sample_rate = self.sample_rate.unwrap_or(16000.0);
-        let window_size = self.window_size.unwrap_or(1024);
 
-        CudaAsrPipeline::new(device_id, vocabulary, sample_rate, window_size)
+        CudaAsrPipeline::new(device_id, vocabulary)
     }
 }
 

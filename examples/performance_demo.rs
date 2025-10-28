@@ -64,15 +64,17 @@ async fn demo_cpu_affinity() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Spawn a thread with specific affinity
-    let handle = affinity_manager.spawn_with_affinity(
-        ThreadType::Inference,
-        Some("demo-inference".to_string()),
-        || {
-            println!("  🧵 Running inference thread with CPU affinity");
-            std::thread::sleep(Duration::from_millis(100));
-            "inference complete"
-        },
-    );
+    let handle = affinity_manager
+        .spawn_with_affinity(
+            ThreadType::Inference,
+            Some("demo-inference".to_string()),
+            || {
+                println!("  🧵 Running inference thread with CPU affinity");
+                std::thread::sleep(Duration::from_millis(100));
+                "inference complete"
+            },
+        )
+        .map_err(|e| format!("Failed to spawn thread with affinity: {}", e))?;
 
     let result = handle.join().unwrap();
     println!("  ✅ Thread result: {}", result);

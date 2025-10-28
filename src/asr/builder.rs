@@ -3,7 +3,7 @@
 //! This module provides builder patterns for complex ASR objects, ensuring proper
 //! validation and configuration during construction.
 
-use crate::asr::traits::{AsrConfig, SystemTimeProvider, TimeProvider};
+use crate::asr::traits::AsrConfig;
 use crate::error::ConfigError;
 use crate::types::{ModelName, PoolSize, SampleRate, TimeoutDuration};
 use std::path::PathBuf;
@@ -126,7 +126,7 @@ impl AsrConfig for AsrPipelineConfig {
 }
 
 /// Builder for ASR pipeline configuration.
-pub struct AsrPipelineBuilder<T = SystemTimeProvider> {
+pub struct AsrPipelineBuilder {
     triton_endpoint: Option<String>,
     vocabulary_path: Option<PathBuf>,
     pool_size: Option<PoolSize>,
@@ -135,11 +135,9 @@ pub struct AsrPipelineBuilder<T = SystemTimeProvider> {
     max_audio_length: Option<usize>,
     optimal_batch_size: Option<usize>,
     performance_config: Option<PerformanceConfig>,
-    #[allow(dead_code)]
-    time_provider: Option<T>,
 }
 
-impl AsrPipelineBuilder<SystemTimeProvider> {
+impl AsrPipelineBuilder {
     /// Create a new ASR pipeline builder.
     pub fn new() -> Self {
         Self {
@@ -151,15 +149,8 @@ impl AsrPipelineBuilder<SystemTimeProvider> {
             max_audio_length: None,
             optimal_batch_size: None,
             performance_config: None,
-            time_provider: None,
         }
     }
-}
-
-impl<T> AsrPipelineBuilder<T>
-where
-    T: TimeProvider + Clone,
-{
     /// Set the Triton endpoint.
     pub fn with_triton_endpoint(mut self, endpoint: impl Into<String>) -> Self {
         self.triton_endpoint = Some(endpoint.into());
@@ -206,24 +197,6 @@ where
     pub fn with_performance_config(mut self, config: PerformanceConfig) -> Self {
         self.performance_config = Some(config);
         self
-    }
-
-    /// Set a custom time provider (for testing).
-    pub fn with_time_provider<U>(self, provider: U) -> AsrPipelineBuilder<U>
-    where
-        U: TimeProvider + Clone,
-    {
-        AsrPipelineBuilder {
-            triton_endpoint: self.triton_endpoint,
-            vocabulary_path: self.vocabulary_path,
-            pool_size: self.pool_size,
-            inference_timeout: self.inference_timeout,
-            sample_rate: self.sample_rate,
-            max_audio_length: self.max_audio_length,
-            optimal_batch_size: self.optimal_batch_size,
-            performance_config: self.performance_config,
-            time_provider: Some(provider),
-        }
     }
 
     /// Enable SIMD optimizations.
@@ -322,7 +295,7 @@ where
     }
 }
 
-impl Default for AsrPipelineBuilder<SystemTimeProvider> {
+impl Default for AsrPipelineBuilder {
     fn default() -> Self {
         Self::new()
     }
@@ -444,7 +417,6 @@ pub struct ModelConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::asr::traits::MockTimeProvider;
     use std::fs;
     use tempfile::NamedTempFile;
 
@@ -497,22 +469,6 @@ mod tests {
             }
             _ => panic!("Expected InvalidValue error"),
         }
-    }
-
-    #[test]
-    fn test_asr_pipeline_builder_with_time_provider() {
-        let temp_vocab = NamedTempFile::new().unwrap();
-        fs::write(&temp_vocab, "word1\nword2\nword3").unwrap();
-
-        let mock_time = MockTimeProvider::new();
-        let config = AsrPipelineBuilder::new()
-            .with_triton_endpoint("http://localhost:8001")
-            .with_vocabulary_path(temp_vocab.path())
-            .with_time_provider(mock_time)
-            .build()
-            .unwrap();
-
-        assert_eq!(config.triton_endpoint, "http://localhost:8001");
     }
 
     #[test]

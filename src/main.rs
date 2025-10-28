@@ -9,15 +9,21 @@ use tracing_subscriber::fmt;
 
 use amira_rust_asr_server::{
     asr::{TritonAsrPipeline, Vocabulary},
-    config::{concurrency::*, Config},
-    error::{AppError, Result},
+    config::Config,
+    error::Result,
     platform::initialize_platform,
     server::{create_router, AppState},
     triton::{ConnectionPool, PoolConfig},
 };
 
+#[cfg(not(feature = "cuda"))]
+use amira_rust_asr_server::error::AppError;
+
 #[cfg(feature = "cuda")]
-use amira_rust_asr_server::asr::CudaAsrPipeline;
+use amira_rust_asr_server::{
+    asr::CudaAsrPipeline,
+    triton::{TritonServerConfig, TritonServerManager},
+};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -52,15 +58,40 @@ async fn main() -> Result<()> {
         config.inference_backend,
         config.is_cuda_backend()
     );
+    let max_streams = config.max_concurrent_streams;
+    let max_batches = config.max_concurrent_batches;
+
     let asr_pipeline = if config.is_cuda_backend() {
         #[cfg(feature = "cuda")]
         {
-            info!("Using CUDA backend for in-process inference");
+            info!("Using CUDA backend for in-process inference with embedded Triton server");
+
+            // Initialize embedded Triton server
+            let triton_config = TritonServerConfig {
+                model_repository: "./model-repo".to_string(),
+                log_verbose: false,
+                exit_on_error: false,
+                ..Default::default()
+            };
+
+            let mut triton_server = TritonServerManager::new(triton_config);
+            match triton_server.initialize() {
+                Ok(_) => info!("Embedded Triton server initialized successfully"),
+                Err(e) => {
+                    info!(
+                        "Warning: Failed to initialize embedded Triton server: {}",
+                        e
+                    );
+                    info!("Continuing with CUDA memory operations only (no model inference)");
+                }
+            }
+
+            // Keep server alive by moving into Arc
+            let _triton_server = Arc::new(triton_server);
+
             Arc::new(CudaAsrPipeline::new(
                 0,
                 shared_vocabulary.clone(),
-                16000.0,
-                1024,
             )?) as Arc<dyn amira_rust_asr_server::asr::AsrPipeline + Send + Sync>
         }
         #[cfg(not(feature = "cuda"))]
@@ -76,13 +107,19 @@ async fn main() -> Result<()> {
             "Using gRPC backend with Triton connection pool for {}",
             config.triton_endpoint
         );
+        let default_pool_config = PoolConfig::default();
+        let pool_max_connections = std::cmp::max(1, max_streams + max_batches);
+        let pool_min_connections = std::cmp::min(
+            pool_max_connections,
+            std::cmp::max(1, default_pool_config.min_connections),
+        );
+
         let pool_config = PoolConfig {
-            max_connections: MAX_CONCURRENT_STREAMS + MAX_CONCURRENT_BATCHES,
-            min_connections: 5,
-            ..Default::default()
+            max_connections: pool_max_connections,
+            min_connections: pool_min_connections,
+            ..default_pool_config
         };
-        let triton_pool = ConnectionPool::new(&config.triton_endpoint, pool_config)
-            .await?;
+        let triton_pool = ConnectionPool::new(&config.triton_endpoint, pool_config).await?;
 
         Arc::new(TritonAsrPipeline::new(
             triton_pool,
@@ -94,8 +131,8 @@ async fn main() -> Result<()> {
     let state = Arc::new(AppState::new(
         asr_pipeline,
         shared_vocabulary,
-        MAX_CONCURRENT_STREAMS,
-        MAX_CONCURRENT_BATCHES,
+        max_streams,
+        max_batches,
     ));
 
     // Create router

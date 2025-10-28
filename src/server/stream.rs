@@ -3,7 +3,6 @@
 //! This module provides the stream processing functionality for
 //! real-time ASR via WebSockets.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -26,6 +25,12 @@ use crate::constants::streaming::{
 };
 use crate::error::{AppError, AsrError, AudioError, Result, ServerError};
 use crate::server::AppState;
+
+/// Directive indicating how the stream loop should proceed after processing a chunk.
+enum ChunkDirective {
+    Continue,
+    Finished,
+}
 
 /// Handle for a streaming ASR session.
 pub struct StreamHandle {
@@ -76,8 +81,8 @@ pub struct StreamProcessor {
     /// Rate limiting: track message count in current window
     message_count: u32,
 
-    /// Rate limiting: start time of current window  
-    window_start: Instant,
+    /// Rate limiting: start time of current rate limit window
+    rate_limit_window_start: Instant,
 
     /// Async task manager for concurrency control
     #[allow(dead_code)]
@@ -89,6 +94,9 @@ pub struct StreamProcessor {
 
     /// Performance monitoring
     performance_monitor: PerformanceMonitor,
+
+    /// Whether a terminal response has been sent to the client
+    finalized: bool,
 }
 
 impl StreamProcessor {
@@ -127,7 +135,7 @@ impl StreamProcessor {
             last_transcription: String::new(),
             is_paused: false,
             message_count: 0,
-            window_start: Instant::now(),
+            rate_limit_window_start: Instant::now(),
             task_manager: AsyncTaskManager::new(4, Duration::from_secs(10)),
             error_recovery: ErrorRecoveryManager::new(
                 3,                          // max retries
@@ -135,6 +143,7 @@ impl StreamProcessor {
                 Duration::from_secs(5),     // max delay
             ),
             performance_monitor: PerformanceMonitor::new(),
+            finalized: false,
         }
     }
 
@@ -153,10 +162,14 @@ impl StreamProcessor {
                     match msg {
                         Some(Ok(Message::Binary(data))) => {
                             last_activity = Instant::now();
-                            if let Err(e) = self.handle_audio_chunk(data).await {
-                                error!("Error handling audio chunk: {}", e);
-                                let _ = self.send_error(&e.to_string()).await;
-                                break;
+                            match self.handle_audio_chunk(data).await {
+                                Ok(ChunkDirective::Continue) => {}
+                                Ok(ChunkDirective::Finished) => break,
+                                Err(e) => {
+                                    error!("Error handling audio chunk: {}", e);
+                                    let _ = self.send_error(&e.to_string()).await;
+                                    break;
+                                }
                             }
                         }
                         Some(Ok(Message::Close(_))) => {
@@ -202,7 +215,7 @@ impl StreamProcessor {
         }
 
         // Process any remaining audio
-        if !self.audio_buffer.is_empty() {
+        if !self.audio_buffer.is_empty() && !self.finalized {
             let _ = self.process_final_audio().await;
         }
     }
@@ -214,7 +227,7 @@ impl StreamProcessor {
     ///
     /// # Returns
     /// Ok(()) if successful, or an error
-    async fn handle_audio_chunk(&mut self, data: Vec<u8>) -> Result<()> {
+    async fn handle_audio_chunk(&mut self, data: Vec<u8>) -> Result<ChunkDirective> {
         self.is_paused = false;
 
         // Validate message size to prevent DoS attacks
@@ -238,13 +251,25 @@ impl StreamProcessor {
                         "End of stream signal received for stream {}",
                         self.stream_id
                     );
-                    return Err(AppError::Server(ServerError::RequestValidation(
-                        "End of stream".to_string(),
-                    )));
+                    self.process_final_audio().await?;
+
+                    if !self.finalized {
+                        let response = AsrResponse {
+                            transcription: self.last_transcription.clone(),
+                            status: StreamStatus::Complete,
+                            message: None,
+                            metadata: None,
+                            opaque: None,
+                        };
+                        self.send_response_async(response).await?;
+                        self.finalized = true;
+                    }
+
+                    return Ok(ChunkDirective::Finished);
                 }
                 CONTROL_BYTE_KEEPALIVE => {
                     self.is_paused = true;
-                    return Ok(());
+                    return Ok(ChunkDirective::Continue);
                 }
                 _ => {
                     return Err(AppError::Server(ServerError::RequestValidation(
@@ -255,11 +280,7 @@ impl StreamProcessor {
         }
 
         // Validate audio data format (must be even for 16-bit PCM)
-        if data.len() % 2 != 0 {
-            return Err(AppError::Server(ServerError::RequestValidation(
-                "Audio data length must be even for 16-bit PCM".to_string(),
-            )));
-        }
+        crate::asr::types::validate_pcm_audio_format(&data)?;
 
         // Check if data is empty (but not a control byte)
         if data.is_empty() {
@@ -276,7 +297,7 @@ impl StreamProcessor {
             self.process_buffered_audio(false).await?;
         }
 
-        Ok(())
+        Ok(ChunkDirective::Continue)
     }
 
     /// Process buffered audio.
@@ -336,9 +357,6 @@ impl StreamProcessor {
         let processing_time = start_time.elapsed();
         self.performance_monitor.record_request(processing_time);
 
-        // Update transcription
-        self.last_transcription = transcription;
-
         // Build metadata
         let audio_length = self.incremental_asr.audio_length();
         let metadata_value = serde_json::json!({
@@ -347,16 +365,14 @@ impl StreamProcessor {
         });
 
         // Convert to HashMap for AsrResponse
-        let mut metadata = HashMap::new();
-        if let serde_json::Value::Object(map) = metadata_value {
-            for (k, v) in map {
-                metadata.insert(k, v);
-            }
-        }
+        let metadata = crate::asr::types::json_value_to_metadata(metadata_value);
 
         // Build response for client
+        // Note: We clone the transcription here for the response and then move the
+        // original into self.last_transcription. This is more efficient than the
+        // move-then-clone pattern and makes the ownership flow clearer.
         let response = AsrResponse {
-            transcription: self.last_transcription.clone(),
+            transcription: transcription.clone(),
             status: if is_final {
                 StreamStatus::Complete
             } else {
@@ -367,8 +383,12 @@ impl StreamProcessor {
             opaque: None,
         };
 
+        // Update last transcription for future keepalive/error responses
+        self.last_transcription = transcription;
+
         // Move serialization off the main event loop to prevent blocking
         self.send_response_async(response).await?;
+        self.finalized = is_final;
 
         Ok(())
     }
@@ -398,6 +418,7 @@ impl StreamProcessor {
         };
 
         // Use async serialization for consistency
+        self.finalized = true;
         self.send_response_async(response).await
     }
 
@@ -452,9 +473,9 @@ impl StreamProcessor {
         let window_duration = Duration::from_secs(WINDOW_DURATION_SECS);
 
         // Check if we need to reset the window
-        if now.duration_since(self.window_start) >= window_duration {
+        if now.duration_since(self.rate_limit_window_start) >= window_duration {
             self.message_count = 0;
-            self.window_start = now;
+            self.rate_limit_window_start = now;
         }
 
         // Increment message count

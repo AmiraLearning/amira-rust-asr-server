@@ -1,7 +1,6 @@
-use std::ffi::CString;
 use std::marker::PhantomData;
-use std::mem::{self, align_of, size_of, transmute, ManuallyDrop};
-use std::os::raw::{c_char, c_int, c_void};
+use std::mem::{self, align_of, size_of, ManuallyDrop};
+use std::os::raw::{c_int, c_void};
 use std::ptr;
 
 use crate::cuda::async_stream::AsyncCudaStream;

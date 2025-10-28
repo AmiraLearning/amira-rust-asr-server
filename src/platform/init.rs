@@ -473,7 +473,7 @@ mod tests {
     #[tokio::test]
     async fn test_platform_initialization() {
         // Create a test configuration
-        let mut config = Config {
+        let config = Config {
             triton_endpoint: "http://localhost:8001".to_string(),
             vocabulary_path: std::path::PathBuf::from("test_vocab.txt"),
             server_host: "127.0.0.1".to_string(),

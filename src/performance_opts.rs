@@ -9,6 +9,9 @@
 pub mod audio {
     // use crate::error::AudioError;
 
+    /// SIMD unroll factor for manual vectorization (process 4 elements at a time)
+    const SIMD_UNROLL_FACTOR: usize = 4;
+
     /// High-performance audio sample conversion with aggressive inlining.
     #[inline(always)]
     pub fn bytes_to_f32_optimized(input: &[u8], output: &mut Vec<f32>) {
@@ -23,7 +26,7 @@ pub mod audio {
         }
 
         // Handle remaining byte if input length is odd
-        if input.len() % 2 != 0 {
+        if !input.len().is_multiple_of(2) {
             let sample = input[input.len() - 1] as i16;
             let normalized = sample as f32 / 128.0;
             output.push(normalized);
@@ -41,13 +44,13 @@ pub mod audio {
         let mut sum = 0.0f32;
         let mut i = 0;
 
-        // Process 4 samples at a time (manual vectorization)
-        while i + 3 < samples.len() {
+        // Process SIMD_UNROLL_FACTOR samples at a time (manual vectorization)
+        while i + SIMD_UNROLL_FACTOR - 1 < samples.len() {
             sum += samples[i].abs();
             sum += samples[i + 1].abs();
             sum += samples[i + 2].abs();
             sum += samples[i + 3].abs();
-            i += 4;
+            i += SIMD_UNROLL_FACTOR;
         }
 
         // Process remaining samples
@@ -64,14 +67,14 @@ pub mod audio {
     pub fn apply_windowing_inplace(samples: &mut [f32], window: &[f32]) {
         debug_assert_eq!(samples.len(), window.len());
 
-        // Manual vectorization - process 4 elements at a time
+        // Manual vectorization - process SIMD_UNROLL_FACTOR elements at a time
         let mut i = 0;
-        while i + 3 < samples.len() {
+        while i + SIMD_UNROLL_FACTOR - 1 < samples.len() {
             samples[i] *= window[i];
             samples[i + 1] *= window[i + 1];
             samples[i + 2] *= window[i + 2];
             samples[i + 3] *= window[i + 3];
-            i += 4;
+            i += SIMD_UNROLL_FACTOR;
         }
 
         // Handle remaining elements
@@ -228,13 +231,18 @@ pub mod neural {
 pub mod matrix {
     // use crate::error::AudioError;
 
+    /// Cache-friendly tile size optimized for L1 cache (64 elements)
+    /// This size is chosen to fit well within typical L1 cache lines (64 bytes)
+    /// and minimize cache misses during matrix operations.
+    const CACHE_LINE_TILE_SIZE: usize = 64;
+
     /// Matrix transpose with cache-friendly tiling.
     #[inline(always)]
     pub fn transpose_optimized(input: &[f32], output: &mut [f32], rows: usize, cols: usize) {
         debug_assert_eq!(input.len(), rows * cols);
         debug_assert_eq!(output.len(), rows * cols);
 
-        const TILE_SIZE: usize = 64; // Cache-friendly tile size
+        const TILE_SIZE: usize = CACHE_LINE_TILE_SIZE;
 
         for i_tile in (0..rows).step_by(TILE_SIZE) {
             for j_tile in (0..cols).step_by(TILE_SIZE) {
@@ -323,7 +331,13 @@ pub mod memory {
         pub fn resize(&mut self, new_len: usize) {
             if new_len <= self.original_len && new_len <= self.data.len() {
                 // We can only truncate the view, not extend it
-                // Use unsafe to work around lifetime constraints
+                // SAFETY:
+                // - ptr is valid because it comes from self.data.as_mut_ptr()
+                // - new_len is validated to be <= original_len and <= current len
+                // - The original allocation remains valid for the lifetime 'a
+                // - We're only creating a smaller view of the same allocation
+                // - No dangling pointer: the underlying data outlives this struct
+                // - Memory layout: same allocation, just shorter slice view
                 unsafe {
                     let ptr = self.data.as_mut_ptr();
                     self.data = std::slice::from_raw_parts_mut(ptr, new_len);
@@ -538,6 +552,11 @@ pub mod hotpath {
             std::sync::atomic::fence(std::sync::atomic::Ordering::SeqCst);
 
             // Touch the first element to bring it into cache
+            // SAFETY:
+            // - data.as_ptr() is valid because data is a non-empty slice
+            // - read_volatile is safe for any initialized T
+            // - We only read, don't write, so no mutation concerns
+            // - The volatile read prevents compiler optimization while ensuring cache load
             let _ = unsafe { data.as_ptr().read_volatile() };
         }
     }

@@ -422,3 +422,305 @@ pub fn parse_raw_tensors(
 
     Ok(result)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // TensorShape tests
+    #[test]
+    fn test_tensor_shape_new() {
+        let shape = TensorShape::new(vec![2, 3, 4]);
+        assert_eq!(shape.dims(), &[2, 3, 4]);
+    }
+
+    #[test]
+    fn test_tensor_shape_scalar() {
+        let shape = TensorShape::scalar();
+        assert!(shape.dims().is_empty());
+        assert_eq!(shape.num_elements(), 1);
+    }
+
+    #[test]
+    fn test_tensor_shape_vector() {
+        let shape = TensorShape::vector(10);
+        assert_eq!(shape.dims(), &[10]);
+        assert_eq!(shape.num_elements(), 10);
+    }
+
+    #[test]
+    fn test_tensor_shape_batch_vector() {
+        let shape = TensorShape::batch_vector(4, 256);
+        assert_eq!(shape.dims(), &[4, 256]);
+        assert_eq!(shape.num_elements(), 1024);
+    }
+
+    #[test]
+    fn test_tensor_shape_batch_3d() {
+        let shape = TensorShape::batch_3d(2, 3, 100);
+        assert_eq!(shape.dims(), &[2, 3, 100]);
+        assert_eq!(shape.num_elements(), 600);
+    }
+
+    #[test]
+    fn test_tensor_shape_num_elements() {
+        let shape = TensorShape::new(vec![2, 3, 4, 5]);
+        assert_eq!(shape.num_elements(), 120);
+
+        let empty_shape = TensorShape::new(vec![]);
+        assert_eq!(empty_shape.num_elements(), 1); // Scalar has 1 element
+    }
+
+    // TensorDataType tests
+    #[test]
+    fn test_tensor_dtype_as_str() {
+        assert_eq!(TensorDataType::Float32.as_str(), "FP32");
+        assert_eq!(TensorDataType::Float64.as_str(), "FP64");
+        assert_eq!(TensorDataType::Int32.as_str(), "INT32");
+        assert_eq!(TensorDataType::Int64.as_str(), "INT64");
+        assert_eq!(TensorDataType::UInt8.as_str(), "UINT8");
+        assert_eq!(TensorDataType::Bool.as_str(), "BOOL");
+    }
+
+    #[test]
+    fn test_tensor_dtype_element_size() {
+        assert_eq!(TensorDataType::Float32.element_size(), 4);
+        assert_eq!(TensorDataType::Float64.element_size(), 8);
+        assert_eq!(TensorDataType::Int32.element_size(), 4);
+        assert_eq!(TensorDataType::Int64.element_size(), 8);
+        assert_eq!(TensorDataType::UInt8.element_size(), 1);
+        assert_eq!(TensorDataType::Bool.element_size(), 1);
+    }
+
+    // TensorDef tests
+    #[test]
+    fn test_tensor_def_new() {
+        let def = TensorDef::new(
+            "test_tensor",
+            TensorDataType::Float32,
+            TensorShape::vector(100),
+        );
+
+        assert_eq!(def.name, "test_tensor");
+        assert_eq!(def.dtype, TensorDataType::Float32);
+        assert_eq!(def.shape.dims(), &[100]);
+    }
+
+    #[test]
+    fn test_tensor_def_byte_size() {
+        let def = TensorDef::new(
+            "test",
+            TensorDataType::Float32,
+            TensorShape::batch_vector(4, 256),
+        );
+        // 4 * 256 elements * 4 bytes per f32 = 4096 bytes
+        assert_eq!(def.byte_size(), 4096);
+
+        let def64 = TensorDef::new(
+            "test64",
+            TensorDataType::Float64,
+            TensorShape::vector(100),
+        );
+        // 100 elements * 8 bytes per f64 = 800 bytes
+        assert_eq!(def64.byte_size(), 800);
+    }
+
+    // TensorData tests
+    #[test]
+    fn test_tensor_data_dtype() {
+        let data = TensorData::Float32(vec![1.0, 2.0, 3.0]);
+        assert_eq!(data.dtype(), TensorDataType::Float32);
+
+        let data = TensorData::Int64(vec![1, 2, 3]);
+        assert_eq!(data.dtype(), TensorDataType::Int64);
+    }
+
+    #[test]
+    fn test_tensor_data_len() {
+        let data = TensorData::Float32(vec![1.0, 2.0, 3.0]);
+        assert_eq!(data.len(), 3);
+
+        let empty_data = TensorData::Int32(vec![]);
+        assert_eq!(empty_data.len(), 0);
+    }
+
+    #[test]
+    fn test_tensor_data_is_empty() {
+        let data = TensorData::Float32(vec![1.0]);
+        assert!(!data.is_empty());
+
+        let empty_data = TensorData::Float32(vec![]);
+        assert!(empty_data.is_empty());
+    }
+
+    #[test]
+    fn test_tensor_data_to_contents_float32() {
+        let data = TensorData::Float32(vec![1.0, 2.0, 3.0]);
+        let contents = data.to_contents();
+
+        assert_eq!(contents.fp32_contents, vec![1.0, 2.0, 3.0]);
+        assert!(contents.int_contents.is_empty());
+    }
+
+    #[test]
+    fn test_tensor_data_to_contents_int32() {
+        let data = TensorData::Int32(vec![10, 20, 30]);
+        let contents = data.to_contents();
+
+        assert_eq!(contents.int_contents, vec![10, 20, 30]);
+        assert!(contents.fp32_contents.is_empty());
+    }
+
+    #[test]
+    fn test_tensor_data_to_contents_uint8() {
+        let data = TensorData::UInt8(vec![1, 2, 3]);
+        let contents = data.to_contents();
+
+        // UInt8 converted to u32
+        assert_eq!(contents.uint_contents, vec![1u32, 2u32, 3u32]);
+    }
+
+    // RawTensor tests
+    #[test]
+    fn test_raw_tensor_as_f32_success() {
+        // Create a raw tensor with 3 f32 values: 1.0, 2.0, 3.0
+        let values = vec![1.0f32, 2.0f32, 3.0f32];
+        let mut bytes = Vec::new();
+        for val in &values {
+            bytes.extend_from_slice(&val.to_le_bytes());
+        }
+
+        let def = TensorDef::new("test", TensorDataType::Float32, TensorShape::vector(3));
+        let tensor = RawTensor {
+            def,
+            data: Bytes::from(bytes),
+        };
+
+        let result = tensor.as_f32().unwrap();
+        assert_eq!(result.len(), 3);
+        assert!((result[0] - 1.0).abs() < 0.001);
+        assert!((result[1] - 2.0).abs() < 0.001);
+        assert!((result[2] - 3.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_raw_tensor_as_f32_wrong_type() {
+        let def = TensorDef::new("test", TensorDataType::Int32, TensorShape::vector(3));
+        let tensor = RawTensor {
+            def,
+            data: Bytes::from(vec![0u8; 12]),
+        };
+
+        let result = tensor.as_f32();
+        assert!(result.is_err());
+        let err_msg = format!("{:?}", result.unwrap_err());
+        assert!(err_msg.contains("Cannot parse tensor"));
+        assert!(err_msg.contains("as f32"));
+    }
+
+    #[test]
+    fn test_raw_tensor_as_i32_success() {
+        // Create a raw tensor with 3 i32 values: 10, 20, 30
+        let values = vec![10i32, 20i32, 30i32];
+        let mut bytes = Vec::new();
+        for val in &values {
+            bytes.extend_from_slice(&val.to_le_bytes());
+        }
+
+        let def = TensorDef::new("test", TensorDataType::Int32, TensorShape::vector(3));
+        let tensor = RawTensor {
+            def,
+            data: Bytes::from(bytes),
+        };
+
+        let result = tensor.as_i32().unwrap();
+        assert_eq!(result, vec![10, 20, 30]);
+    }
+
+    #[test]
+    fn test_raw_tensor_as_i64_success() {
+        // Create a raw tensor with 2 i64 values: 100, 200
+        let values = vec![100i64, 200i64];
+        let mut bytes = Vec::new();
+        for val in &values {
+            bytes.extend_from_slice(&val.to_le_bytes());
+        }
+
+        let def = TensorDef::new("test", TensorDataType::Int64, TensorShape::vector(2));
+        let tensor = RawTensor {
+            def,
+            data: Bytes::from(bytes),
+        };
+
+        let result = tensor.as_i64().unwrap();
+        assert_eq!(result, vec![100, 200]);
+    }
+
+    #[test]
+    fn test_raw_tensor_as_scalar_f32() {
+        let value = 42.5f32;
+        let bytes = value.to_le_bytes();
+
+        let def = TensorDef::new("test", TensorDataType::Float32, TensorShape::scalar());
+        let tensor = RawTensor {
+            def,
+            data: Bytes::from(bytes.to_vec()),
+        };
+
+        let result = tensor.as_scalar_f32().unwrap();
+        assert!((result - 42.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_raw_tensor_as_scalar_i64() {
+        let value = 12345i64;
+        let bytes = value.to_le_bytes();
+
+        let def = TensorDef::new("test", TensorDataType::Int64, TensorShape::scalar());
+        let tensor = RawTensor {
+            def,
+            data: Bytes::from(bytes.to_vec()),
+        };
+
+        let result = tensor.as_scalar_i64().unwrap();
+        assert_eq!(result, 12345);
+    }
+
+    #[test]
+    fn test_raw_tensor_as_scalar_empty() {
+        let def = TensorDef::new("test", TensorDataType::Float32, TensorShape::scalar());
+        let tensor = RawTensor {
+            def,
+            data: Bytes::from(vec![]), // Empty data
+        };
+
+        let result = tensor.as_scalar_f32();
+        assert!(result.is_err());
+        let err_msg = format!("{:?}", result.unwrap_err());
+        assert!(err_msg.contains("is empty"));
+    }
+
+    // Test edge cases
+    #[test]
+    fn test_tensor_shape_zero_dim() {
+        let shape = TensorShape::new(vec![0, 10]);
+        // 0 * 10 = 0 elements, but we use max(1, dim) so it becomes 1 * 10 = 10
+        assert_eq!(shape.num_elements(), 10);
+    }
+
+    #[test]
+    fn test_tensor_def_byte_size_scalar() {
+        let def = TensorDef::new("test", TensorDataType::Float32, TensorShape::scalar());
+        assert_eq!(def.byte_size(), 4); // 1 element * 4 bytes
+    }
+
+    #[test]
+    fn test_tensor_data_bool() {
+        let data = TensorData::Bool(vec![true, false, true]);
+        assert_eq!(data.dtype(), TensorDataType::Bool);
+        assert_eq!(data.len(), 3);
+
+        let contents = data.to_contents();
+        assert_eq!(contents.bool_contents, vec![true, false, true]);
+    }
+}

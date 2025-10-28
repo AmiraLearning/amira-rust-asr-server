@@ -7,6 +7,7 @@
 //! - Batch health checking to reduce per-connection overhead
 //! - Optimized data structures for better cache locality
 
+use once_cell::sync::Lazy;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -17,6 +18,14 @@ use tracing::{info, warn};
 use crate::error::{AppError, Result};
 use crate::triton::{ReliableTritonClient, ReliableTritonClientBuilder};
 // use crate::raii::{ResourceGuard, PooledConnection, ConnectionPool as RaiiConnectionPool};
+
+/// Reference start instant used to derive monotonically increasing timestamps.
+static START_INSTANT: Lazy<Instant> = Lazy::new(Instant::now);
+
+#[inline]
+fn elapsed_nanos() -> u64 {
+    START_INSTANT.elapsed().as_nanos() as u64
+}
 
 /// Optimized configuration for the connection pool
 #[derive(Debug, Clone)]
@@ -73,7 +82,7 @@ struct FastConnection {
 
 impl FastConnection {
     fn new(client: ReliableTritonClient) -> Self {
-        let now_nanos = Instant::now().elapsed().as_nanos() as u64;
+        let now_nanos = elapsed_nanos();
 
         Self {
             client,
@@ -86,7 +95,7 @@ impl FastConnection {
 
     /// Update last used time atomically
     fn touch(&self) {
-        let now_nanos = Instant::now().elapsed().as_nanos() as u64;
+        let now_nanos = elapsed_nanos();
         self.last_used_nanos.store(now_nanos, Ordering::Relaxed);
         self.use_count.fetch_add(1, Ordering::Relaxed);
     }
@@ -98,7 +107,7 @@ impl FastConnection {
             return false;
         }
 
-        let now_nanos = Instant::now().elapsed().as_nanos() as u64;
+        let now_nanos = elapsed_nanos();
         let created_nanos = self.created_at_nanos.load(Ordering::Relaxed);
         let last_used_nanos = self.last_used_nanos.load(Ordering::Relaxed);
 
@@ -453,7 +462,7 @@ mod tests {
         let config = OptimizedPoolConfig::default();
 
         // Test with a mock or skip if no Triton server available
-        let builder = ReliableTritonClientBuilder::new("http://localhost:8001");
+        let _builder = ReliableTritonClientBuilder::new("http://localhost:8001");
 
         // Would need a running Triton server for full test
         // For now, just test configuration

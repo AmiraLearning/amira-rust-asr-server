@@ -480,6 +480,7 @@ impl std::fmt::Display for ConfidenceScore {
 mod tests {
     use super::*;
 
+    // SampleRate tests
     #[test]
     fn test_sample_rate_validation() {
         assert!(SampleRate::new(0).is_err());
@@ -487,6 +488,194 @@ mod tests {
         assert!(SampleRate::new(16000).is_ok());
     }
 
+    #[test]
+    fn test_sample_rate_constants() {
+        assert_eq!(SampleRate::STANDARD_16KHZ.value(), 16000);
+        assert_eq!(SampleRate::STANDARD_8KHZ.value(), 8000);
+        assert_eq!(SampleRate::HIGH_QUALITY_48KHZ.value(), 48000);
+    }
+
+    #[test]
+    fn test_sample_rate_display() {
+        let rate = SampleRate::STANDARD_16KHZ;
+        assert_eq!(format!("{}", rate), "16000Hz");
+    }
+
+    #[test]
+    fn test_sample_rate_as_f32() {
+        let rate = SampleRate::STANDARD_16KHZ;
+        assert_eq!(rate.as_f32(), 16000.0);
+    }
+
+    // AudioSamples tests
+    #[test]
+    fn test_audio_samples_duration() {
+        let samples = AudioSamples::new(16000);
+        let sample_rate = SampleRate::STANDARD_16KHZ;
+        let duration = samples.duration(sample_rate);
+
+        assert_eq!(duration, Duration::from_secs(1));
+    }
+
+    #[test]
+    fn test_audio_samples_is_empty() {
+        let empty = AudioSamples::new(0);
+        assert!(empty.is_empty());
+
+        let not_empty = AudioSamples::new(100);
+        assert!(!not_empty.is_empty());
+    }
+
+    #[test]
+    fn test_audio_samples_display() {
+        let samples = AudioSamples::new(16000);
+        assert_eq!(format!("{}", samples), "16000 samples");
+    }
+
+    // TokenId tests
+    #[test]
+    fn test_token_id_constants() {
+        assert_eq!(TokenId::BLANK.value(), 0);
+        assert_eq!(TokenId::UNKNOWN.value(), -1);
+    }
+
+    #[test]
+    fn test_token_id_is_blank() {
+        assert!(TokenId::BLANK.is_blank());
+        assert!(!TokenId::new(1).is_blank());
+    }
+
+    #[test]
+    fn test_token_id_is_unknown() {
+        assert!(TokenId::UNKNOWN.is_unknown());
+        assert!(!TokenId::new(0).is_unknown());
+    }
+
+    #[test]
+    fn test_token_id_display() {
+        let token = TokenId::new(42);
+        assert_eq!(format!("{}", token), "token_42");
+    }
+
+    // ModelName tests
+    #[test]
+    fn test_model_name_validation() {
+        assert!(ModelName::new("encoder").is_ok());
+        assert!(ModelName::new("").is_err());
+
+        let err = ModelName::new("").unwrap_err();
+        let err_msg = format!("{:?}", err);
+        assert!(err_msg.contains("empty model name"));
+    }
+
+    #[test]
+    fn test_model_name_display() {
+        let name = ModelName::new("encoder").unwrap();
+        assert_eq!(format!("{}", name), "encoder");
+    }
+
+    #[test]
+    fn test_model_name_into_string() {
+        let name = ModelName::new("decoder").unwrap();
+        assert_eq!(name.into_string(), "decoder");
+    }
+
+    // TensorShape tests
+    #[test]
+    fn test_tensor_shape_rank() {
+        let shape = TensorShape::new(vec![2, 3, 4]);
+        assert_eq!(shape.rank(), 3);
+
+        let scalar = TensorShape::new(vec![]);
+        assert_eq!(scalar.rank(), 0);
+    }
+
+    #[test]
+    fn test_tensor_shape_total_elements() {
+        let shape = TensorShape::new(vec![2, 3, 4]);
+        assert_eq!(shape.total_elements(), 24);
+
+        let scalar = TensorShape::new(vec![]);
+        assert_eq!(scalar.total_elements(), 1);
+    }
+
+    #[test]
+    fn test_tensor_shape_predicates() {
+        let scalar = TensorShape::new(vec![]);
+        assert!(scalar.is_scalar());
+        assert!(!scalar.is_vector());
+        assert!(!scalar.is_matrix());
+
+        let vector = TensorShape::new(vec![10]);
+        assert!(!vector.is_scalar());
+        assert!(vector.is_vector());
+        assert!(!vector.is_matrix());
+
+        let matrix = TensorShape::new(vec![3, 4]);
+        assert!(!matrix.is_scalar());
+        assert!(!matrix.is_vector());
+        assert!(matrix.is_matrix());
+    }
+
+    #[test]
+    fn test_tensor_shape_display() {
+        let shape = TensorShape::new(vec![2, 3, 4]);
+        assert_eq!(format!("{}", shape), "[2, 3, 4]");
+
+        let scalar = TensorShape::new(vec![]);
+        assert_eq!(format!("{}", scalar), "[]");
+    }
+
+    // PoolSize tests
+    #[test]
+    fn test_pool_size_validation() {
+        assert!(PoolSize::new(0).is_err());
+        assert!(PoolSize::new(1).is_ok());
+        assert!(PoolSize::new(1001).is_err());
+        assert!(PoolSize::new(100).is_ok());
+    }
+
+    #[test]
+    fn test_pool_size_constants() {
+        assert_eq!(PoolSize::DEFAULT.value(), 10);
+        assert_eq!(PoolSize::MIN.value(), 1);
+        assert_eq!(PoolSize::MAX.value(), 1000);
+    }
+
+    #[test]
+    fn test_pool_size_display() {
+        let size = PoolSize::new(50).unwrap();
+        assert_eq!(format!("{}", size), "50 connections");
+    }
+
+    // TimeoutDuration tests
+    #[test]
+    fn test_timeout_duration_validation() {
+        assert!(TimeoutDuration::new(Duration::ZERO).is_err());
+        assert!(TimeoutDuration::new(Duration::from_secs(1)).is_ok());
+        assert!(TimeoutDuration::new(Duration::from_secs(301)).is_err());
+    }
+
+    #[test]
+    fn test_timeout_duration_from_millis() {
+        let timeout = TimeoutDuration::from_millis(5000).unwrap();
+        assert_eq!(timeout.value(), Duration::from_millis(5000));
+    }
+
+    #[test]
+    fn test_timeout_duration_from_secs() {
+        let timeout = TimeoutDuration::from_secs(10).unwrap();
+        assert_eq!(timeout.value(), Duration::from_secs(10));
+    }
+
+    #[test]
+    fn test_timeout_duration_constants() {
+        assert_eq!(TimeoutDuration::DEFAULT.value(), Duration::from_secs(5));
+        assert_eq!(TimeoutDuration::SHORT.value(), Duration::from_secs(1));
+        assert_eq!(TimeoutDuration::LONG.value(), Duration::from_secs(30));
+    }
+
+    // AudioBuffer tests
     #[test]
     fn test_audio_buffer_creation() {
         let samples = vec![0.1, 0.2, 0.3];
@@ -498,6 +687,109 @@ mod tests {
     }
 
     #[test]
+    fn test_audio_buffer_validation_empty() {
+        let result = AudioBuffer::new(vec![], SampleRate::STANDARD_16KHZ);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_audio_buffer_validation_nan() {
+        let samples = vec![1.0, f32::NAN, 3.0];
+        let result = AudioBuffer::new(samples, SampleRate::STANDARD_16KHZ);
+        assert!(result.is_err());
+
+        let err_msg = format!("{:?}", result.unwrap_err());
+        assert!(err_msg.contains("Invalid sample at index 1"));
+    }
+
+    #[test]
+    fn test_audio_buffer_validation_infinity() {
+        let samples = vec![1.0, f32::INFINITY, 3.0];
+        let result = AudioBuffer::new(samples, SampleRate::STANDARD_16KHZ);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_audio_buffer_duration() {
+        let samples = vec![0.0; 16000]; // 1 second of audio at 16kHz
+        let buffer = AudioBuffer::new(samples, SampleRate::STANDARD_16KHZ).unwrap();
+        let duration = buffer.duration();
+        assert_eq!(duration, Duration::from_secs(1));
+    }
+
+    #[test]
+    fn test_audio_buffer_normalize() {
+        let samples = vec![-2.0, 1.0, 2.0];
+        let mut buffer = AudioBuffer::new(samples, SampleRate::STANDARD_16KHZ).unwrap();
+        buffer.normalize();
+
+        let normalized = buffer.samples();
+        assert!((normalized[0] + 1.0).abs() < 0.001);
+        assert!((normalized[1] - 0.5).abs() < 0.001);
+        assert!((normalized[2] - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_audio_buffer_normalize_all_zeros() {
+        let samples = vec![0.0, 0.0, 0.0];
+        let mut buffer = AudioBuffer::new(samples, SampleRate::STANDARD_16KHZ).unwrap();
+        buffer.normalize();
+
+        // Normalizing all zeros should keep them as zeros
+        for &sample in buffer.samples() {
+            assert_eq!(sample, 0.0);
+        }
+    }
+
+    #[test]
+    fn test_audio_buffer_apply_window() {
+        let samples = vec![1.0, 1.0, 1.0];
+        let mut buffer = AudioBuffer::new(samples, SampleRate::STANDARD_16KHZ).unwrap();
+        let window = vec![0.5, 1.0, 0.5];
+
+        buffer.apply_window(&window).unwrap();
+
+        let windowed = buffer.samples();
+        assert!((windowed[0] - 0.5).abs() < 0.001);
+        assert!((windowed[1] - 1.0).abs() < 0.001);
+        assert!((windowed[2] - 0.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_audio_buffer_apply_window_wrong_length() {
+        let samples = vec![1.0, 1.0, 1.0];
+        let mut buffer = AudioBuffer::new(samples, SampleRate::STANDARD_16KHZ).unwrap();
+        let window = vec![0.5, 1.0]; // Wrong length
+
+        let result = buffer.apply_window(&window);
+        assert!(result.is_err());
+
+        let err_msg = format!("{:?}", result.unwrap_err());
+        assert!(err_msg.contains("doesn't match"));
+    }
+
+    #[test]
+    fn test_audio_buffer_into_parts() {
+        let samples = vec![1.0, 2.0, 3.0];
+        let sample_rate = SampleRate::STANDARD_16KHZ;
+        let buffer = AudioBuffer::new(samples.clone(), sample_rate).unwrap();
+
+        let (extracted_samples, extracted_rate) = buffer.into_parts();
+        assert_eq!(extracted_samples, samples);
+        assert_eq!(extracted_rate, sample_rate);
+    }
+
+    #[test]
+    fn test_audio_buffer_display() {
+        let samples = vec![0.0; 16000];
+        let buffer = AudioBuffer::new(samples, SampleRate::STANDARD_16KHZ).unwrap();
+        let display = format!("{}", buffer);
+        assert!(display.contains("16000 samples"));
+        assert!(display.contains("16000Hz"));
+    }
+
+    // ConfidenceScore tests
+    #[test]
     fn test_confidence_score_validation() {
         assert!(ConfidenceScore::new(-0.1).is_err());
         assert!(ConfidenceScore::new(1.1).is_err());
@@ -506,11 +798,27 @@ mod tests {
     }
 
     #[test]
-    fn test_audio_samples_duration() {
-        let samples = AudioSamples::new(16000);
-        let sample_rate = SampleRate::STANDARD_16KHZ;
-        let duration = samples.duration(sample_rate);
+    fn test_confidence_score_is_high_confidence() {
+        let high = ConfidenceScore::new(0.9).unwrap();
+        assert!(high.is_high_confidence());
 
-        assert_eq!(duration, Duration::from_secs(1));
+        let not_high = ConfidenceScore::new(0.7).unwrap();
+        assert!(!not_high.is_high_confidence());
+    }
+
+    #[test]
+    fn test_confidence_score_is_low_confidence() {
+        let low = ConfidenceScore::new(0.2).unwrap();
+        assert!(low.is_low_confidence());
+
+        let not_low = ConfidenceScore::new(0.5).unwrap();
+        assert!(!not_low.is_low_confidence());
+    }
+
+    #[test]
+    fn test_confidence_score_display() {
+        let score = ConfidenceScore::new(0.754).unwrap();
+        let display = format!("{}", score);
+        assert!(display.contains("75.")); // Should show as percentage
     }
 }

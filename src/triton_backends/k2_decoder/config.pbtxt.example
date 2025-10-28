@@ -1,0 +1,139 @@
+# K2 Decoder Backend Configuration Example
+# This configuration shows how to set up the k2_decoder backend with
+# personalized per-user language model support.
+
+name: "k2_decoder"
+backend: "k2_decoder"
+max_batch_size: 16
+default_model_filename: ""  # Backend handles model loading
+
+# Input: Encoder outputs (log probabilities)
+input [
+  {
+    name: "encoder_outputs"
+    data_type: TYPE_FP32
+    dims: [ -1, 1030 ]  # [time_steps, vocab_size]
+  },
+  {
+    name: "user_id"
+    data_type: TYPE_STRING
+    dims: [ 1 ]
+    optional: true
+    # Optional: Identifies which user-specific FST to load from cache
+    # Expected format: string containing user identifier
+    # Example: "user123" will load FST from {USER_FST_DIR}/user123/G.fst
+  },
+  {
+    name: "lm_weight"
+    data_type: TYPE_FP32
+    dims: [ 1 ]
+    optional: true
+    # Optional: Weight for LM interpolation (0.0 to 1.0)
+    # Controls balance between base graph and user FST
+    # Higher values favor the user's personalized LM
+    # Default: 0.5 (equal weighting)
+  }
+]
+
+# Output: Decoded token sequence
+output [
+  {
+    name: "tokens"
+    data_type: TYPE_INT32
+    dims: [ -1 ]  # Variable length sequence of token IDs
+  }
+]
+
+# Instance configuration
+instance_group [
+  {
+    count: 1
+    kind: KIND_GPU
+    gpus: [ 0 ]
+  }
+]
+
+# Backend-specific parameters
+parameters: {
+  # REQUIRED: Path to base decoding graph (relative to model version directory)
+  key: "DECODING_GRAPH_PATH"
+  value: { string_value: "G.fst" }
+}
+
+parameters: {
+  # OPTIONAL: Directory containing per-user FST files
+  # If not specified, per-user personalization is disabled
+  # Expected structure: {USER_FST_DIR}/{user_id}/G.fst
+  # Example: /models/user_fsts/user123/G.fst
+  key: "USER_FST_DIR"
+  value: { string_value: "/models/user_fsts" }
+}
+
+parameters: {
+  # OPTIONAL: Maximum number of user FSTs to cache in GPU memory
+  # Default: 100
+  # Tune based on available GPU memory and user count
+  # Each FST typically consumes 10-50MB
+  key: "MAX_CACHED_FSTS"
+  value: { string_value: "100" }
+}
+
+parameters: {
+  # OPTIONAL: Default LM interpolation weight
+  # Default: 0.5 (equal weight between base and user LM)
+  # Range: 0.0 (base only) to 1.0 (user only)
+  # Can be overridden per-request via lm_weight input
+  key: "DEFAULT_LM_WEIGHT"
+  value: { string_value: "0.5" }
+}
+
+parameters: {
+  # OPTIONAL: Beam search parameters
+  # These control the k2 decoding process
+  key: "SEARCH_BEAM"
+  value: { string_value: "20.0" }
+}
+
+parameters: {
+  key: "OUTPUT_BEAM"
+  value: { string_value: "8.0" }
+}
+
+parameters: {
+  key: "MIN_ACTIVE_STATES"
+  value: { string_value: "30" }
+}
+
+parameters: {
+  key: "MAX_ACTIVE_STATES"
+  value: { string_value: "10000" }
+}
+
+# Dynamic batching configuration (optional)
+dynamic_batching {
+  preferred_batch_size: [ 4, 8, 16 ]
+  max_queue_delay_microseconds: 5000  # 5ms max queue delay
+}
+
+# Performance optimization hints
+optimization {
+  # Priority for model loading
+  priority: PRIORITY_DEFAULT
+
+  # Input/output memory management
+  input_pinned_memory {
+    enable: true
+  }
+  output_pinned_memory {
+    enable: true
+  }
+
+  # CUDA graph optimization (may not work with dynamic FST loading)
+  cuda {
+    graphs: false
+    graph_spec: []
+  }
+}
+
+# Versioning
+version_policy: { latest: { num_versions: 1 } }

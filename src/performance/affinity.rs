@@ -9,6 +9,18 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 use tracing::{debug, info, warn};
 
+/// Percentage of CPU cores dedicated to inference tasks on large systems
+const CPU_ALLOCATION_INFERENCE_PERCENT: usize = 60;
+
+/// Percentage of CPU cores dedicated to I/O tasks on large systems
+const CPU_ALLOCATION_IO_PERCENT: usize = 20;
+
+/// Percentage of CPU cores dedicated to network tasks on large systems
+const CPU_ALLOCATION_NETWORK_PERCENT: usize = 15;
+
+/// Percentage of CPU cores dedicated to background tasks on large systems
+const CPU_ALLOCATION_BACKGROUND_PERCENT: usize = 5;
+
 /// Types of threads for affinity assignment
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ThreadType {
@@ -170,10 +182,10 @@ impl AffinityManager {
             _ => {
                 // Large systems - optimal separation
                 // TODO: inference is happening on the GPU, so we should not assign it to the CPU
-                let inference_cores = total_cores * 60 / 100; // 60% for inference
-                let io_cores = total_cores * 20 / 100; // 20% for I/O
-                let network_cores = total_cores * 15 / 100; // 15% for network
-                let _background_cores = total_cores * 5 / 100; // 5% for background
+                let inference_cores = total_cores * CPU_ALLOCATION_INFERENCE_PERCENT / 100;
+                let io_cores = total_cores * CPU_ALLOCATION_IO_PERCENT / 100;
+                let network_cores = total_cores * CPU_ALLOCATION_NETWORK_PERCENT / 100;
+                let _background_cores = total_cores * CPU_ALLOCATION_BACKGROUND_PERCENT / 100;
 
                 let io_start = 0;
                 let inference_start = io_start + io_cores;
@@ -241,12 +253,16 @@ impl AffinityManager {
     }
 
     /// Spawn a thread with specific CPU affinity
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the thread could not be spawned.
     pub fn spawn_with_affinity<F, T>(
         &self,
         thread_type: ThreadType,
         name: Option<String>,
         f: F,
-    ) -> thread::JoinHandle<T>
+    ) -> std::io::Result<thread::JoinHandle<T>>
     where
         F: FnOnce() -> T + Send + 'static,
         T: Send + 'static,
@@ -258,17 +274,15 @@ impl AffinityManager {
             builder = builder.name(name);
         }
 
-        builder
-            .spawn(move || {
-                // Set affinity for this thread
-                if let Err(e) = affinity_manager.set_thread_affinity(thread_type) {
-                    warn!("Failed to set thread affinity: {}", e);
-                }
+        builder.spawn(move || {
+            // Set affinity for this thread
+            if let Err(e) = affinity_manager.set_thread_affinity(thread_type) {
+                warn!("Failed to set thread affinity: {}", e);
+            }
 
-                // Execute the user function
-                f()
-            })
-            .expect("Failed to spawn thread")
+            // Execute the user function
+            f()
+        })
     }
 
     /// Get the recommended number of threads for a specific thread type
@@ -377,17 +391,19 @@ mod tests {
     #[test]
     fn test_thread_spawning_with_affinity() {
         let manager = Arc::new(AffinityManager::new());
-        let manager_clone = Arc::clone(&manager);
+        let _manager_clone = Arc::clone(&manager);
 
-        let handle = manager.spawn_with_affinity(
-            ThreadType::Background,
-            Some("test-thread".to_string()),
-            move || {
-                // Simple test function
-                thread::sleep(Duration::from_millis(10));
-                42
-            },
-        );
+        let handle = manager
+            .spawn_with_affinity(
+                ThreadType::Background,
+                Some("test-thread".to_string()),
+                move || {
+                    // Simple test function
+                    thread::sleep(Duration::from_millis(10));
+                    42
+                },
+            )
+            .expect("Failed to spawn thread for test");
 
         let result = handle.join().unwrap();
         assert_eq!(result, 42);

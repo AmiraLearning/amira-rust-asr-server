@@ -32,8 +32,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let circuit_breaker = Arc::new(CircuitBreaker::new(circuit_config));
 
-    // Initialize graceful shutdown
+    // Initialize graceful shutdown handler
     let shutdown_handler = GracefulShutdown::new();
+    // Set up signal handlers (spawns background task, returns immediately)
     shutdown_handler.wait_for_signal().await;
 
     // Create demo routes
@@ -64,9 +65,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let server = axum::serve(listener, app);
 
     // Run server with graceful shutdown
+    // Subscribe to shutdown signals
+    let mut shutdown_rx = shutdown_handler.subscribe();
     let graceful = server.with_graceful_shutdown(async move {
-        let mut shutdown_guard = shutdown_handler.subscribe();
-        let _ = shutdown_guard.recv().await;
+        let _ = shutdown_rx.recv().await;
         info!("🛑 Graceful shutdown initiated");
     });
 
@@ -124,9 +126,7 @@ async fn demo_failure(State(state): State<AppState>) -> (StatusCode, Json<Value>
         .circuit_breaker
         .call(async {
             sleep(Duration::from_millis(50)).await;
-            Err::<String, std::io::Error>(std::io::Error::other(
-                "Simulated failure for demo",
-            ))
+            Err::<String, std::io::Error>(std::io::Error::other("Simulated failure for demo"))
         })
         .await;
 
@@ -193,9 +193,7 @@ async fn demo_scenarios(circuit_breaker: Arc<CircuitBreaker>) {
         let result = circuit_breaker
             .call(async {
                 sleep(Duration::from_millis(50)).await;
-                Err::<String, std::io::Error>(std::io::Error::other(
-                    format!("Demo failure {}", i),
-                ))
+                Err::<String, std::io::Error>(std::io::Error::other(format!("Demo failure {}", i)))
             })
             .await;
 

@@ -170,6 +170,8 @@ mod client;
 mod model;
 mod pool_optimized;
 mod reliable_client;
+#[cfg(feature = "cuda")]
+mod server_manager;
 mod types;
 
 pub use client::{TritonClient, TritonClientError};
@@ -184,4 +186,9 @@ pub use pool_optimized::{
     OptimizedPooledConnection as PooledConnection, PoolStats, PoolStatsSnapshot,
 };
 pub use reliable_client::{ReliableTritonClient, ReliableTritonClientBuilder};
+#[cfg(feature = "cuda")]
+pub use server_manager::{
+    create_shared_server_manager, ModelControlMode, SharedTritonServerManager, TritonServerConfig,
+    TritonServerManager,
+};
 pub use types::{parse_raw_tensors, RawTensor, TensorData, TensorDataType, TensorDef, TensorShape};

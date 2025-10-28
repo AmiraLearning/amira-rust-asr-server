@@ -1,0 +1,38 @@
+# Dockerfile for building k2_decoder Triton backend
+#
+# This provides a complete build environment with CUDA, k2, and Triton.
+#
+# Usage:
+#   docker build -f Dockerfile.build -t k2-decoder-builder .
+#   docker run --rm -v $(pwd):/workspace k2-decoder-builder
+
+FROM nvcr.io/nvidia/tritonserver:24.01-py3
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    cmake \
+    git \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install PyTorch and k2
+RUN pip3 install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+RUN pip3 install --no-cache-dir k2
+
+# Set up build environment
+WORKDIR /workspace
+
+# Build command (will be run when container starts)
+CMD ["bash", "-c", "\
+    mkdir -p build && \
+    cd build && \
+    cmake .. \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_CUDA_ARCHITECTURES='70;75;80;86;90' && \
+    make -j$(nproc) && \
+    echo 'Build complete! Output in build/' && \
+    ls -lh libk2_decoder.so"]
+
+# Alternative: Interactive shell for debugging
+# CMD ["bash"]

@@ -8,7 +8,7 @@ use tokio::sync::oneshot;
 
 use crate::cuda::{CudaError, CudaSharedMemoryError};
 
-/// FFI declarations for async CUDA operations
+// FFI declarations for async CUDA operations
 extern "C" {
     fn cuda_stream_create(stream: *mut *mut c_void) -> CudaError;
     fn cuda_stream_destroy(stream: *mut c_void) -> CudaError;
@@ -443,6 +443,7 @@ impl Future for EventWaiter {
 /// Stream pool for managing multiple CUDA streams
 pub struct AsyncCudaStreamPool {
     streams: Vec<Arc<AsyncCudaStream>>,
+    #[allow(dead_code)]
     device_id: i32,
     current_index: std::sync::atomic::AtomicUsize,
 }

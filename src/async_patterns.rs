@@ -5,7 +5,6 @@
 
 use crate::error::AsrError;
 use crate::types::AudioBuffer;
-// use crate::asr::traits::{ModelBackend, ModelInput, AudioFeatures, EncoderOutput, DecoderOutput};
 use futures::future::BoxFuture;
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
@@ -15,24 +14,6 @@ use tokio::time::{timeout, Instant};
 
 /// Result type for async operations.
 pub type AsyncResult<T> = Result<T, AsrError>;
-
-// /// Structured concurrency for ASR pipeline processing.
-// /// Note: This is currently commented out due to trait object safety issues.
-// /// The ModelBackend trait has generic methods which makes it not object-safe.
-// // TODO: Reimplement this with concrete types when needed
-/*
-pub struct StructuredAsrPipeline {
-    preprocessor: Arc<dyn ModelBackend<Error = TritonError>>,
-    encoder: Arc<dyn ModelBackend<Error = TritonError>>,
-    decoder: Arc<dyn ModelBackend<Error = TritonError>>,
-    concurrency_limiter: Arc<Semaphore>,
-    timeout_duration: Duration,
-}
-
-impl StructuredAsrPipeline {
-    // Implementation would go here...
-}
-*/
 
 /// Async task manager for structured concurrency.
 pub struct AsyncTaskManager {
@@ -224,6 +205,13 @@ impl PerformanceMonitor {
     }
 
     /// Get current statistics.
+    ///
+    /// # Returns
+    ///
+    /// A tuple containing:
+    /// - `request_count`: Total number of requests processed
+    /// - `error_count`: Total number of errors encountered
+    /// - `total_processing_time`: Cumulative time spent processing all requests
     pub fn get_stats(&self) -> (usize, usize, Duration) {
         let requests = self
             .request_count
@@ -254,24 +242,20 @@ pub struct ProcessorStats {
     start_time: Instant,
 }
 
-impl Clone for ProcessorStats {
-    fn clone(&self) -> Self {
-        Self {
-            items_received: AtomicUsize::new(
-                self.items_received
-                    .load(std::sync::atomic::Ordering::SeqCst),
-            ),
-            items_processed: AtomicUsize::new(
-                self.items_processed
-                    .load(std::sync::atomic::Ordering::SeqCst),
-            ),
-            batches_processed: AtomicUsize::new(
-                self.batches_processed
-                    .load(std::sync::atomic::Ordering::SeqCst),
-            ),
-            start_time: self.start_time,
-        }
-    }
+/// Snapshot of processor statistics at a point in time.
+///
+/// This is a lightweight, non-atomic snapshot of ProcessorStats that can be
+/// cheaply cloned and passed around without creating new atomic objects.
+#[derive(Debug, Clone, Copy)]
+pub struct ProcessorStatsSnapshot {
+    /// Total number of items received
+    pub items_received: usize,
+    /// Total number of items successfully processed
+    pub items_processed: usize,
+    /// Total number of batches processed
+    pub batches_processed: usize,
+    /// Duration since processor started
+    pub elapsed: Duration,
 }
 
 impl ProcessorStats {
@@ -303,17 +287,23 @@ impl ProcessorStats {
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
-    /// Get current statistics.
-    pub fn get_stats(&self) -> (usize, usize, usize, Duration) {
-        (
-            self.items_received
+    /// Get current statistics as a lightweight snapshot.
+    ///
+    /// Returns a snapshot of the processor statistics that can be cheaply
+    /// cloned and passed around without creating new atomic objects.
+    pub fn get_stats(&self) -> ProcessorStatsSnapshot {
+        ProcessorStatsSnapshot {
+            items_received: self
+                .items_received
                 .load(std::sync::atomic::Ordering::Relaxed),
-            self.items_processed
+            items_processed: self
+                .items_processed
                 .load(std::sync::atomic::Ordering::Relaxed),
-            self.batches_processed
+            batches_processed: self
+                .batches_processed
                 .load(std::sync::atomic::Ordering::Relaxed),
-            self.start_time.elapsed(),
-        )
+            elapsed: self.start_time.elapsed(),
+        }
     }
 }
 
@@ -355,7 +345,7 @@ impl ConcurrencyManager {
 
         let result = task.await;
 
-        if let Ok(_) = &result {
+        if result.is_ok() {
             self.stats.record_item_processed()
         }
 
@@ -363,8 +353,11 @@ impl ConcurrencyManager {
     }
 
     /// Get current statistics.
-    pub fn get_stats(&self) -> ProcessorStats {
-        self.stats.as_ref().clone()
+    ///
+    /// Returns a lightweight snapshot of the current processor statistics including
+    /// items received, items processed, and elapsed time.
+    pub fn get_stats(&self) -> ProcessorStatsSnapshot {
+        self.stats.get_stats()
     }
 }
 

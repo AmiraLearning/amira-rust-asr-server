@@ -1,5 +1,9 @@
 cmake_minimum_required(VERSION 3.18)
-project(k2_decoder_backend)
+project(k2_decoder_backend LANGUAGES CXX)
+
+# Require C++17 for std::filesystem (used in fst_cache.h)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Set CMAKE_PREFIX_PATH to find libtorch and k2
 set(CMAKE_PREFIX_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../third_party/libtorch;${CMAKE_CURRENT_SOURCE_DIR}/../../../third_party/k2/install")
@@ -27,7 +31,17 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(triton_backend)
 
-add_library(k2_decoder SHARED k2_decoder_backend.cc)
+# Source files
+set(K2_DECODER_SOURCES
+    k2_decoder_backend.cc
+)
+
+# Header files (for IDE support and documentation)
+set(K2_DECODER_HEADERS
+    fst_cache.h
+)
+
+add_library(k2_decoder SHARED ${K2_DECODER_SOURCES})
 
 target_link_libraries(k2_decoder
     PRIVATE
@@ -38,6 +52,7 @@ target_link_libraries(k2_decoder
 
 target_include_directories(k2_decoder
     PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}  # For fst_cache.h
     ${k2_INCLUDE_DIRS}
     ${TORCH_INCLUDE_DIRS}
     ${triton_backend_SOURCE_DIR}/include
@@ -46,6 +61,8 @@ target_include_directories(k2_decoder
 
 set_target_properties(k2_decoder PROPERTIES
     CUDA_ARCHITECTURES "70;75;80;86;90"  # Added 90 for GH200 (H100/H200)
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
 )
 
 install(TARGETS k2_decoder DESTINATION backends/k2_decoder) 

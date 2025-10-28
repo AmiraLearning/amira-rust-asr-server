@@ -8,6 +8,12 @@ use crate::asr::types::{SeqSlice, W2V_SAMPLE_RATE};
 use crate::error::{AppError, AsrError, AudioError, Result};
 use tracing::debug;
 
+/// Exponential moving average weight for existing value (70%)
+const EMA_WEIGHT_EXISTING: f32 = 0.7;
+
+/// Exponential moving average weight for new value (30%)
+const EMA_WEIGHT_NEW: f32 = 0.3;
+
 /// Convert raw audio bytes (16-bit PCM) to floating point samples.
 ///
 /// # Arguments
@@ -104,7 +110,7 @@ impl Iterator for WindowSequenceIterator {
         let start = self.consumed;
         let end = std::cmp::min(self.total_len, self.consumed + self.window_size);
         let offset = std::cmp::min(self.leading_context, self.consumed);
-        let mut overlap = self.trailing_context + self.leading_context;
+        let mut total_overlap = self.trailing_context + self.leading_context;
 
         if end < self.total_len {
             self.consumed = end - self.leading_context - self.trailing_context;
@@ -112,13 +118,13 @@ impl Iterator for WindowSequenceIterator {
             self.consumed = end;
             if end - start < self.window_size {
                 let new_start = std::cmp::max(0, end - self.window_size);
-                overlap += start - new_start;
+                total_overlap += start - new_start;
             }
         }
 
         let source_slice = SeqSlice::new(start, end);
         let target_slice = SeqSlice::new(start + offset, end);
-        let overlap_ratio = overlap as f32 / self.window_size as f32;
+        let overlap_ratio = total_overlap as f32 / self.window_size as f32;
 
         debug!(
             "Audio window [{:.2}, {:.2}] seconds, overlap ratio: {:.2}",
@@ -224,9 +230,10 @@ impl OverlappingAudioBuffer {
             if self.mean_amplitude == 0.0 {
                 self.mean_amplitude = calculate_mean_amplitude(samples);
             } else {
-                // Exponential moving average with alpha = 0.3
+                // Exponential moving average
                 let new_amplitude = calculate_mean_amplitude(samples);
-                self.mean_amplitude = 0.7 * self.mean_amplitude + 0.3 * new_amplitude;
+                self.mean_amplitude =
+                    EMA_WEIGHT_EXISTING * self.mean_amplitude + EMA_WEIGHT_NEW * new_amplitude;
             }
         } else {
             debug!("Buffer capacity exceeded, truncating samples");
@@ -361,6 +368,17 @@ impl AudioRingBuffer {
         let end_pos = (current_write_pos + len) % self.capacity;
 
         // Perform the write operation
+        // SAFETY:
+        // - We cast self.buffer.as_ptr() to *mut u8, which is safe because:
+        //   1. The buffer is Box<[u8]> with a stable memory address
+        //   2. We're the exclusive writer (enforced by &self and atomic positions)
+        //   3. The lifetime of buffer_ptr doesn't exceed the buffer's lifetime
+        // - ptr::copy_nonoverlapping is safe because:
+        //   1. data.as_ptr() and buffer_ptr.add(pos) are valid, non-null, properly aligned
+        //   2. Ranges don't overlap (source is external data slice, dest is internal buffer)
+        //   3. current_write_pos < capacity (enforced by modulo)
+        //   4. We validated len <= available_write() so no overflow
+        //   5. For wraparound: first_part and (len - first_part) sum to len, both in bounds
         unsafe {
             let buffer_ptr = self.buffer.as_ptr() as *mut u8;
             if end_pos > current_write_pos {
@@ -389,23 +407,6 @@ impl AudioRingBuffer {
         Ok(())
     }
 
-    /// Read data from the buffer (lock-free, allocating version).
-    ///
-    /// # Arguments
-    /// * `len` - Number of bytes to read
-    ///
-    /// # Returns
-    /// The read data, or None if not enough data is available
-    #[deprecated(note = "Use read_into for zero-copy operation")]
-    pub fn read(&self, len: usize) -> Option<Vec<u8>> {
-        let mut result = vec![0u8; len];
-        if self.read_into(len, &mut result)? == len {
-            Some(result)
-        } else {
-            None
-        }
-    }
-
     /// Read data into an existing buffer (zero-copy, lock-free).
     ///
     /// # Arguments
@@ -425,6 +426,14 @@ impl AudioRingBuffer {
         let end_pos = (current_read_pos + len) % self.capacity;
 
         // Perform the read operation
+        // SAFETY:
+        // - buffer_ptr is valid because self.buffer is a Box<[u8]> with stable memory
+        // - ptr::copy_nonoverlapping is safe because:
+        //   1. buffer_ptr and output.as_mut_ptr() are valid, non-null, properly aligned
+        //   2. Ranges don't overlap (source is internal buffer, dest is external output)
+        //   3. current_read_pos < capacity (enforced by modulo)
+        //   4. We validated len <= available_read() so data exists and no underflow
+        //   5. For wraparound: first_part and (len - first_part) sum to len, both in bounds
         unsafe {
             let buffer_ptr = self.buffer.as_ptr();
             if end_pos > current_read_pos {
@@ -483,5 +492,303 @@ impl AudioRingBuffer {
 
         self.read_pos.store(0, Ordering::Release);
         self.write_pos.store(0, Ordering::Release);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Test bytes_to_f32_samples conversion
+    #[test]
+    fn test_bytes_to_f32_samples_basic() {
+        // Test silence (zero samples)
+        let silence = vec![0u8, 0u8, 0u8, 0u8];
+        let samples = bytes_to_f32_samples(&silence);
+        assert_eq!(samples.len(), 2);
+        assert_eq!(samples[0], 0.0);
+        assert_eq!(samples[1], 0.0);
+    }
+
+    #[test]
+    fn test_bytes_to_f32_samples_max_min_values() {
+        // Test maximum positive value (32767)
+        let max_bytes = vec![0xFF, 0x7F]; // 32767 in little-endian
+        let max_samples = bytes_to_f32_samples(&max_bytes);
+        assert_eq!(max_samples.len(), 1);
+        assert!((max_samples[0] - 32767.0 / 32768.0).abs() < 0.0001);
+
+        // Test minimum negative value (-32768)
+        let min_bytes = vec![0x00, 0x80]; // -32768 in little-endian
+        let min_samples = bytes_to_f32_samples(&min_bytes);
+        assert_eq!(min_samples.len(), 1);
+        assert_eq!(min_samples[0], -1.0);
+    }
+
+    #[test]
+    fn test_bytes_to_f32_samples_empty() {
+        let empty: Vec<u8> = vec![];
+        let samples = bytes_to_f32_samples(&empty);
+        assert_eq!(samples.len(), 0);
+    }
+
+    #[test]
+    fn test_bytes_to_f32_samples_known_values() {
+        // Test known conversion: 16384 = 0x4000 (little-endian: 0x00, 0x40)
+        let bytes = vec![0x00, 0x40];
+        let samples = bytes_to_f32_samples(&bytes);
+        assert_eq!(samples.len(), 1);
+        assert!((samples[0] - 0.5).abs() < 0.0001); // 16384 / 32768 = 0.5
+    }
+
+    // Test AudioRingBuffer basic operations
+    #[test]
+    fn test_ring_buffer_basic_write_read() {
+        let buffer = AudioRingBuffer::new(100);
+
+        // Initially empty
+        assert_eq!(buffer.available_read(), 0);
+        assert!(buffer.is_empty());
+
+        // Write some data
+        let data = vec![1u8, 2, 3, 4, 5];
+        buffer.write(&data).unwrap();
+
+        assert_eq!(buffer.available_read(), 5);
+        assert!(!buffer.is_empty());
+
+        // Read data back
+        let mut output = vec![0u8; 5];
+        let read_count = buffer.read_into(5, &mut output).unwrap();
+        assert_eq!(read_count, 5);
+        assert_eq!(output, data);
+
+        // Now empty again
+        assert_eq!(buffer.available_read(), 0);
+        assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn test_ring_buffer_wraparound() {
+        let buffer = AudioRingBuffer::new(10);
+
+        // Write 8 bytes
+        let data1 = vec![1u8, 2, 3, 4, 5, 6, 7, 8];
+        buffer.write(&data1).unwrap();
+
+        // Read 5 bytes
+        let mut output1 = vec![0u8; 5];
+        buffer.read_into(5, &mut output1).unwrap();
+        assert_eq!(output1, vec![1, 2, 3, 4, 5]);
+
+        // Write 6 more bytes (this will wrap around)
+        let data2 = vec![9u8, 10, 11, 12, 13, 14];
+        buffer.write(&data2).unwrap();
+
+        // Read all remaining data
+        let mut output2 = vec![0u8; 9];
+        let read_count = buffer.read_into(9, &mut output2).unwrap();
+        assert_eq!(read_count, 9);
+        assert_eq!(output2, vec![6, 7, 8, 9, 10, 11, 12, 13, 14]);
+    }
+
+    #[test]
+    fn test_ring_buffer_overflow() {
+        let buffer = AudioRingBuffer::new(10);
+
+        // Try to write more than capacity - 1
+        let data = vec![1u8; 11];
+        let result = buffer.write(&data);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_ring_buffer_read_insufficient_data() {
+        let buffer = AudioRingBuffer::new(100);
+
+        // Write 5 bytes
+        buffer.write(&vec![1u8, 2, 3, 4, 5]).unwrap();
+
+        // Try to read 10 bytes
+        let mut output = vec![0u8; 10];
+        let result = buffer.read_into(10, &mut output);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_ring_buffer_clear() {
+        let buffer = AudioRingBuffer::new(100);
+
+        // Write data
+        buffer.write(&vec![1u8, 2, 3, 4, 5]).unwrap();
+        assert_eq!(buffer.available_read(), 5);
+
+        // Clear buffer
+        buffer.clear();
+        assert_eq!(buffer.available_read(), 0);
+        assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn test_ring_buffer_concurrent_access() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let buffer = Arc::new(AudioRingBuffer::new(1000));
+        let buffer_clone = Arc::clone(&buffer);
+
+        // Writer thread
+        let writer = thread::spawn(move || {
+            for i in 0..10 {
+                let data = vec![i as u8; 10];
+                while buffer_clone.write(&data).is_err() {
+                    thread::yield_now(); // Wait for space
+                }
+                thread::sleep(std::time::Duration::from_micros(100));
+            }
+        });
+
+        // Reader thread
+        let buffer_clone2 = Arc::clone(&buffer);
+        let reader = thread::spawn(move || {
+            let mut total_read = 0;
+            let mut output = vec![0u8; 10];
+
+            while total_read < 100 {
+                if let Some(count) = buffer_clone2.read_into(10, &mut output) {
+                    total_read += count;
+                }
+                thread::yield_now();
+            }
+
+            assert_eq!(total_read, 100);
+        });
+
+        writer.join().unwrap();
+        reader.join().unwrap();
+    }
+
+    // Test OverlappingAudioBuffer
+    #[test]
+    fn test_overlapping_buffer_basic() {
+        let mut buffer = OverlappingAudioBuffer::new(1000, 1.0, 0.1, 0.1);
+
+        assert!(buffer.is_empty());
+        assert_eq!(buffer.mean_amplitude(), 0.0);
+
+        // Add samples
+        let samples = vec![0.5f32; 100];
+        buffer.add_samples(&samples);
+
+        assert!(!buffer.is_empty());
+        assert!(buffer.mean_amplitude() > 0.0);
+        assert_eq!(buffer.get_window().len(), 100);
+    }
+
+    #[test]
+    fn test_overlapping_buffer_overflow_handling() {
+        let mut buffer = OverlappingAudioBuffer::new(100, 1.0, 0.1, 0.1);
+
+        // Add samples that exceed capacity
+        let samples1 = vec![1.0f32; 80];
+        buffer.add_samples(&samples1);
+        assert_eq!(buffer.get_window().len(), 80);
+
+        // Add more samples - should trigger shift
+        let samples2 = vec![2.0f32; 50];
+        buffer.add_samples(&samples2);
+
+        // Buffer should keep context and new samples
+        assert!(buffer.get_window().len() <= 100);
+        assert!(buffer.get_window().len() > 0);
+    }
+
+    #[test]
+    fn test_overlapping_buffer_mean_amplitude_tracking() {
+        let mut buffer = OverlappingAudioBuffer::new(1000, 1.0, 0.1, 0.1);
+
+        // Add samples with amplitude 0.5
+        let samples1 = vec![0.5f32; 100];
+        buffer.add_samples(&samples1);
+        let amp1 = buffer.mean_amplitude();
+        assert!(amp1 > 0.4 && amp1 < 0.6);
+
+        // Add samples with amplitude 1.0
+        let samples2 = vec![1.0f32; 100];
+        buffer.add_samples(&samples2);
+        let amp2 = buffer.mean_amplitude();
+
+        // Mean should have increased (exponential moving average)
+        assert!(amp2 > amp1);
+    }
+
+    #[test]
+    fn test_overlapping_buffer_clear() {
+        let mut buffer = OverlappingAudioBuffer::new(1000, 1.0, 0.1, 0.1);
+
+        buffer.add_samples(&vec![0.5f32; 100]);
+        assert!(!buffer.is_empty());
+        assert!(buffer.mean_amplitude() > 0.0);
+
+        buffer.clear();
+        assert!(buffer.is_empty());
+        assert_eq!(buffer.mean_amplitude(), 0.0);
+    }
+
+    #[test]
+    fn test_overlapping_buffer_slice_extraction() {
+        let mut buffer = OverlappingAudioBuffer::new(1000, 1.0, 0.1, 0.1);
+
+        // Create test pattern
+        let samples: Vec<f32> = (0..100).map(|i| i as f32 / 100.0).collect();
+        buffer.add_samples(&samples);
+
+        // Extract slice
+        let slice = SeqSlice::new(10, 20);
+        let extracted = buffer.get_slice(&slice);
+
+        assert_eq!(extracted.len(), 10);
+        assert!((extracted[0] - 0.10).abs() < 0.01);
+        assert!((extracted[9] - 0.19).abs() < 0.01);
+    }
+
+    // Test window_sequence
+    #[test]
+    fn test_window_sequence_basic() {
+        let windows: Vec<_> = window_sequence(100, 50, 5, 5).collect();
+
+        // Should generate at least 2 windows
+        assert!(windows.len() >= 2);
+
+        // First window should start at 0
+        assert_eq!(windows[0].0.start, 0);
+
+        // Check overlap ratios are reasonable
+        for (_, _, overlap_ratio) in &windows {
+            assert!(*overlap_ratio >= 0.0 && *overlap_ratio <= 1.0);
+        }
+    }
+
+    #[test]
+    fn test_window_sequence_coverage() {
+        let total_len = 100;
+        let windows: Vec<_> = window_sequence(total_len, 50, 5, 5).collect();
+
+        // Last window should reach the end
+        let last_window = windows.last().unwrap();
+        assert_eq!(last_window.0.end, total_len);
+    }
+
+    // Test audio_len
+    #[test]
+    fn test_audio_len() {
+        // W2V_SAMPLE_RATE is 16000
+        let samples = vec![0.0f32; 16000];
+        let length = audio_len(&samples);
+        assert!((length - 1.0).abs() < 0.001); // Should be 1 second
+
+        let samples2 = vec![0.0f32; 32000];
+        let length2 = audio_len(&samples2);
+        assert!((length2 - 2.0).abs() < 0.001); // Should be 2 seconds
     }
 }

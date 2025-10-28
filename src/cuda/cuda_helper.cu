@@ -4,6 +4,8 @@
 #include <cstring>
 #include <memory>
 #include <iostream>
+#include <chrono>
+#include <thread>
 
 // Include Triton C-API headers for demonstration
 #include "triton/core/tritonserver.h"
@@ -32,21 +34,136 @@ extern "C" CudaError get_cuda_device_count_ffi(int* count) {
 // Global Triton server instance
 static TRITONSERVER_Server* g_triton_server = nullptr;
 
-// Initialize Triton server with real C-API (NO-OP VERSION)
-// This function is kept for compilation compatibility but does nothing at runtime
-// to avoid conflicts with the external Triton server container
+// Initialize Triton server with real C-API
+// This creates an embedded Triton server instance for in-process inference
 CudaError InitializeTritonServer() {
-    static bool already_logged = false;
-    
-    if (!already_logged) {
-        printf("📝 NOTE: Using external Triton server container, skipping embedded server initialization\n");
-        printf("🔧 This avoids CUDA context conflicts while maintaining compilation compatibility\n");
-        already_logged = true;
+    // Check if already initialized
+    if (g_triton_server != nullptr) {
+        printf("Triton server already initialized\n");
+        return CUDA_SUCCESS;
     }
-    
-    // Return success without actually creating an embedded server
-    // This allows CUDA memory allocation to proceed without conflicts
+
+    printf("Initializing embedded Triton Inference Server...\n");
+
+    // Create server options
+    TRITONSERVER_ServerOptions* server_options = nullptr;
+    TRITONSERVER_Error* err = TRITONSERVER_ServerOptionsNew(&server_options);
+    if (err != nullptr) {
+        printf("Failed to create server options: %s\n", TRITONSERVER_ErrorMessage(err));
+        TRITONSERVER_ErrorDelete(err);
+        return CUDA_ERROR_UNKNOWN;
+    }
+
+    // Set model repository path
+    // The path should be passed from Rust configuration, but for now use default
+    const char* model_repo_path = "./model-repo";
+    err = TRITONSERVER_ServerOptionsSetModelRepositoryPath(server_options, model_repo_path);
+    if (err != nullptr) {
+        printf("Failed to set model repository path: %s\n", TRITONSERVER_ErrorMessage(err));
+        TRITONSERVER_ErrorDelete(err);
+        TRITONSERVER_ServerOptionsDelete(server_options);
+        return CUDA_ERROR_UNKNOWN;
+    }
+
+    // Set model control mode to EXPLICIT for manual loading
+    err = TRITONSERVER_ServerOptionsSetModelControlMode(server_options, TRITONSERVER_MODEL_CONTROL_EXPLICIT);
+    if (err != nullptr) {
+        printf("Warning: Failed to set model control mode: %s\n", TRITONSERVER_ErrorMessage(err));
+        TRITONSERVER_ErrorDelete(err);
+    }
+
+    // Set log verbose level
+    err = TRITONSERVER_ServerOptionsSetLogVerbose(server_options, 0);
+    if (err != nullptr) {
+        printf("Warning: Failed to set log verbose: %s\n", TRITONSERVER_ErrorMessage(err));
+        TRITONSERVER_ErrorDelete(err);
+    }
+
+    // Enable CUDA shared memory
+    err = TRITONSERVER_ServerOptionsSetBufferManagerThreadCount(server_options, 4);
+    if (err != nullptr) {
+        printf("Warning: Failed to set buffer manager thread count: %s\n", TRITONSERVER_ErrorMessage(err));
+        TRITONSERVER_ErrorDelete(err);
+    }
+
+    // Create the server
+    err = TRITONSERVER_ServerNew(&g_triton_server, server_options);
+    if (err != nullptr) {
+        printf("Failed to create Triton server: %s\n", TRITONSERVER_ErrorMessage(err));
+        TRITONSERVER_ErrorDelete(err);
+        TRITONSERVER_ServerOptionsDelete(server_options);
+        return CUDA_ERROR_UNKNOWN;
+    }
+
+    // Wait for server to be ready
+    bool server_ready = false;
+    for (int i = 0; i < 30; i++) {  // Wait up to 30 seconds
+        err = TRITONSERVER_ServerIsReady(g_triton_server, &server_ready);
+        if (err != nullptr) {
+            printf("Failed to check server readiness: %s\n", TRITONSERVER_ErrorMessage(err));
+            TRITONSERVER_ErrorDelete(err);
+            TRITONSERVER_ServerOptionsDelete(server_options);
+            return CUDA_ERROR_UNKNOWN;
+        }
+
+        if (server_ready) {
+            break;
+        }
+
+        // Sleep for 1 second
+        printf("Waiting for Triton server to become ready... (%d/30)\n", i + 1);
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
+
+    if (!server_ready) {
+        printf("Triton server failed to become ready after 30 seconds\n");
+        TRITONSERVER_ServerOptionsDelete(server_options);
+        return CUDA_ERROR_UNKNOWN;
+    }
+
+    // Clean up options (server keeps a copy)
+    TRITONSERVER_ServerOptionsDelete(server_options);
+
+    printf("Embedded Triton Inference Server initialized successfully\n");
     return CUDA_SUCCESS;
+}
+
+// Shutdown Triton server
+extern "C" CudaError ShutdownTritonServer() {
+    if (g_triton_server == nullptr) {
+        printf("Triton server not initialized, nothing to shutdown\n");
+        return CUDA_SUCCESS;
+    }
+
+    printf("Shutting down embedded Triton Inference Server...\n");
+
+    TRITONSERVER_Error* err = TRITONSERVER_ServerDelete(g_triton_server);
+    if (err != nullptr) {
+        printf("Failed to delete Triton server: %s\n", TRITONSERVER_ErrorMessage(err));
+        TRITONSERVER_ErrorDelete(err);
+        return CUDA_ERROR_UNKNOWN;
+    }
+
+    g_triton_server = nullptr;
+    printf("Triton server shutdown complete\n");
+    return CUDA_SUCCESS;
+}
+
+// Check if Triton server is ready
+extern "C" bool IsTritonServerReady() {
+    if (g_triton_server == nullptr) {
+        return false;
+    }
+
+    bool ready = false;
+    TRITONSERVER_Error* err = TRITONSERVER_ServerIsReady(g_triton_server, &ready);
+    if (err != nullptr) {
+        printf("Failed to check server readiness: %s\n", TRITONSERVER_ErrorMessage(err));
+        TRITONSERVER_ErrorDelete(err);
+        return false;
+    }
+
+    return ready;
 }
 
 // Structure to hold CUDA memory and IPC handle

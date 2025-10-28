@@ -112,11 +112,6 @@ impl CircuitBreaker {
         }
     }
 
-    /// Create a circuit breaker with default configuration.
-    pub fn default() -> Self {
-        Self::new(CircuitBreakerConfig::default())
-    }
-
     /// Get the current state of the circuit breaker.
     pub fn state(&self) -> CircuitState {
         *self.state.read()
